@@ -19,36 +19,35 @@ import speakeasy from "speakeasy";
 
 dotenv.config();
 
-const REFRESH_TOKEN_EXPIRES = "15d";
-const ISSUER = process.env.ISSUER || "quantumrobots.com";
-const AUDIENCE = process.env.AUDIENCE || "api.quantumrobots.com";
-const privateKey = Buffer.from(process.env.PRIVATE_KEY, "base64").toString("utf-8");
-const publicKey = Buffer.from(process.env.PUBLIC_KEY, "base64").toString("utf-8");
-const DEV_MODE = process.env.DEV_MODE === "true";
+const REFRESH_TOKEN_EXPIRES = '15d';
+const ISSUER = process.env.ISSUER || 'quantumrobots.com';
+const AUDIENCE = process.env.AUDIENCE || 'api.quantumrobots.com';
+const privateKey = Buffer.from(process.env.PRIVATE_KEY, 'base64').toString('utf-8');
+const publicKey = Buffer.from(process.env.PUBLIC_KEY, 'base64').toString('utf-8');
+const DEV_MODE = process.env.DEV_MODE === 'true';
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null;
 
 if (!privateKey || !publicKey) {
-    logger.error("Missing PRIVATE_KEY or PUBLIC_KEY environment variables");
-    throw new Error("Missing PRIVATE_KEY or PUBLIC_KEY environment variables");
+    logger.error('Missing PRIVATE_KEY or PUBLIC_KEY environment variables');
+    throw new Error('Missing PRIVATE_KEY or PUBLIC_KEY environment variables');
 }
 
-// Blacklist tokens
 const blacklistToken = async (token) => {
     if (redis) {
-        await redis.set(`blacklist:${token}`, "true", "EX", ms(REFRESH_TOKEN_EXPIRES) / 1000);
+        await redis.set(`blacklist:${token}`, 'true', 'EX', ms(REFRESH_TOKEN_EXPIRES) / 1000);
+        logger.info('Token blacklisted', { token: '[REDACTED]' });
     } else {
-        logger.warn("No Redis; skipping blacklist for token");
+        logger.warn('No Redis; skipping blacklist for token');
     }
 };
 
 const isBlacklisted = async (token) => {
     if (redis) {
-        return await redis.get(`blacklist:${token}`) !== null;
+        return (await redis.get(`blacklist:${token}`)) !== null;
     }
     return false;
 };
 
-// Middleware to add security headers
 const setSecurityHeaders = (req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -57,7 +56,6 @@ const setSecurityHeaders = (req, res, next) => {
     next();
 };
 
-// Validation rules for username
 const usernameValidation = [
     body('username')
         .trim()
@@ -70,7 +68,6 @@ const usernameValidation = [
         .withMessage('Username cannot contain consecutive underscores, hyphens, or periods.'),
 ];
 
-// Validation rules for password
 const passwordValidation = [
     body('password')
         .trim()
@@ -85,7 +82,6 @@ const passwordValidation = [
         .withMessage('Password cannot contain three or more consecutive special characters.'),
 ];
 
-// Validation middleware
 const validate = (validations) => [
     ...validations,
     (req, res, next) => {
@@ -102,8 +98,7 @@ const validate = (validations) => [
     },
 ];
 
-// Register endpoint
-export const register = [
+exports.register = [
     setSecurityHeaders,
     validate([
         ...usernameValidation,
@@ -113,11 +108,22 @@ export const register = [
     asyncHandler(async (req, res) => {
         const { username, email, password } = req.body;
         const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+        logger.info('Register route accessed', {
+            body: { username, email, password: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
 
         try {
             const exists = await Users.findOne({ $or: [{ email }, { username }] });
             if (exists) {
-                logger.warn('User already exists', { email, username, ip, route: req.originalUrl });
+                logger.warn('User already exists', { email, username, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'User with this email or username already exists' });
             }
 
@@ -132,24 +138,31 @@ export const register = [
 
             const token = await user.generateEmailVerifyToken();
             await user.save();
-            logger.info('User registered', { email, userId: user._id, ip, route: req.originalUrl });
+            logger.info('User registered', { email, userId: user._id, ip, country, deviceInfo });
 
             const emailSent = await sendVerificationEmail(email, null, token);
             if (!emailSent) {
-                logger.error('Failed to send verification email', { email, ip, route: req.originalUrl });
+                logger.error('Failed to send verification email', { email, ip, country, deviceInfo });
                 return res.status(500).json({ message: 'Failed to send verification email' });
             }
 
             res.status(201).json({ message: 'Verification email sent. Tap the token in the email to copy it and paste it in the app.' });
         } catch (error) {
-            logger.error('Registration error', { error: error.message, email, ip, route: req.originalUrl });
+            logger.error('Registration error', {
+                error: error.message,
+                stack: error.stack,
+                email,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
             res.status(500).json({ message: 'Server error during registration' });
         }
     }),
 ];
 
-// Verify Email endpoint
-export const verifyEmail = [
+exports.verifyEmail = [
     setSecurityHeaders,
     validate([
         body('token').notEmpty().withMessage('Verification token is required'),
@@ -157,6 +170,17 @@ export const verifyEmail = [
     asyncHandler(async (req, res) => {
         const { token } = req.body;
         const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+        logger.info('Verify email route accessed', {
+            body: { token: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
 
         try {
             const user = await Users.findOne({
@@ -165,7 +189,7 @@ export const verifyEmail = [
             });
 
             if (!user) {
-                logger.warn('Invalid or expired verification token', { ip, route: req.originalUrl });
+                logger.warn('Invalid or expired verification token', { ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid or expired verification token' });
             }
 
@@ -174,407 +198,660 @@ export const verifyEmail = [
             user.isActive = true;
             await user.save();
 
-            logger.info('Email verified', { userId: user._id, email: user.email, ip, route: req.originalUrl });
+            logger.info('Email verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.status(200).json({ message: 'Email verified successfully! You can now log in.' });
         } catch (error) {
-            logger.error('Email verification error', { error: error.message, ip, route: req.originalUrl });
+            logger.error('Email verification error', {
+                error: error.message,
+                stack: error.stack,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
             res.status(500).json({ message: 'Server error during email verification' });
         }
     }),
 ];
 
-// Other endpoints (unchanged)
-export const login = [
+exports.login = [
+    setSecurityHeaders,
     validate([
-        body("usernameOrEmail").notEmpty().withMessage("Username or email is required"),
-        body("password").notEmpty().withMessage("Password is required"),
-        body("fingerprint").custom((value) => DEV_MODE || value).withMessage("Device fingerprint is required"),
-        body("totp").optional().isLength({ min: 6, max: 6 }).withMessage("TOTP must be 6 digits"),
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
+        body('password').notEmpty().withMessage('Password is required'),
+        body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
+        body('totp').optional().isLength({ min: 6, max: 6 }).withMessage('TOTP must be 6 digits'),
     ]),
     asyncHandler(async (req, res) => {
-        logger.info('Login route accessed', { body: req.body, ip: requestIp.getClientIp(req) });
         const { usernameOrEmail, password, fingerprint, totp } = req.body;
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : "unknown";
-        const deviceInfo = req.headers["user-agent"];
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        const user = await Users.findOne({
-            $or: [{ email: usernameOrEmail }, { username: usernameOrEmail }],
+        logger.info('Login route accessed', {
+            body: { usernameOrEmail, fingerprint, totp: totp ? '[REDACTED]' : undefined, password: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
         });
-        if (!user || !user.isActive || !(await user.verifyPassword(password))) {
-            logger.warn("Invalid login attempt", { usernameOrEmail, ip });
-            return res.status(400).json({ message: "Invalid credentials or inactive account" });
-        }
 
-        if (user.twoFactorEnabled && !DEV_MODE) {
-            if (!totp) {
-                logger.warn("TOTP required", { userId: user._id, ip });
-                return res.status(400).json({ message: "TOTP required", requiresTotp: true });
-            }
-            const isValid = speakeasy.totp.verify({
-                secret: user.twoFactorSecret,
-                encoding: "base32",
-                token: totp,
+        try {
+            const user = await Users.findOne({
+                $or: [{ email: usernameOrEmail }, { username: usernameOrEmail }],
             });
-            if (!isValid) {
-                logger.warn("Invalid TOTP", { userId: user._id, ip });
-                return res.status(400).json({ message: "Invalid TOTP" });
+
+            if (!user || !user.isActive || !(await user.verifyPassword(password))) {
+                logger.warn('Invalid login attempt', { usernameOrEmail, ip, country, deviceInfo });
+                return res.status(400).json({ message: 'Invalid credentials or inactive account' });
             }
-        }
 
-        const existingFingerprints = user.sessions.map(s => s.fingerprint);
-        const isNewDevice = fingerprint && !existingFingerprints.includes(fingerprint) && !DEV_MODE;
-
-        if (isNewDevice) {
-            const otp = await user.generateDeviceVerifyToken(fingerprint);
-            const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
-            if (!emailSent) {
-                logger.error("Failed to send device verification email", { email: user.email, ip });
-                return res.status(500).json({ message: "Failed to send verification email" });
+            if (user.twoFactorEnabled && !DEV_MODE) {
+                if (!totp) {
+                    logger.warn('TOTP required', { userId: user._id, ip, country, deviceInfo });
+                    return res.status(400).json({ message: 'TOTP required', requiresTotp: true });
+                }
+                const isValid = speakeasy.totp.verify({
+                    secret: user.twoFactorSecret,
+                    encoding: 'base32',
+                    token: totp,
+                });
+                if (!isValid) {
+                    logger.warn('Invalid TOTP', { userId: user._id, ip, country, deviceInfo });
+                    return res.status(400).json({ message: 'Invalid TOTP' });
+                }
             }
-            logger.info("New device detected; OTP sent", { userId: user._id, fingerprint, ip });
-            return res.status(200).json({ message: "New device detected. Verify with OTP sent to your email.", requiresOtp: true });
+
+            const existingFingerprints = user.sessions.map(s => s.fingerprint);
+            const isNewDevice = fingerprint && !existingFingerprints.includes(fingerprint) && !DEV_MODE;
+
+            if (isNewDevice) {
+                const otp = await user.generateDeviceVerifyToken(fingerprint);
+                const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
+                if (!emailSent) {
+                    logger.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
+                    return res.status(500).json({ message: 'Failed to send verification email' });
+                }
+                logger.info('New device detected; OTP sent', { userId: user._id, fingerprint, ip, country, deviceInfo });
+                return res.status(200).json({ message: 'New device detected. Verify with OTP sent to your email.', requiresOtp: true });
+            }
+
+            user.lastLogin = new Date();
+            user.lastLoginIp = ip;
+            user.lastLoginDevice = deviceInfo;
+            await user.cleanSessions();
+
+            const accessToken = await user.generateAccessToken();
+            const refreshToken = await user.generateRefreshToken(fingerprint || 'dev-mode', ip, country, deviceInfo);
+
+            await user.save();
+            logger.info('Login successful', { userId: user._id, username: user.username, ip, country, deviceInfo });
+
+            return res.json({
+                accessToken,
+                refreshToken,
+                csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+                user: sanitizeUser(user),
+            });
+        } catch (error) {
+            logger.error('Login error', {
+                error: error.message,
+                stack: error.stack,
+                usernameOrEmail,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during login' });
         }
-
-        user.lastLogin = new Date();
-        user.lastLoginIp = ip;
-        user.lastLoginDevice = deviceInfo;
-        await user.cleanSessions();
-
-        const accessToken = await user.generateAccessToken();
-        const refreshToken = await user.generateRefreshToken(fingerprint || "dev-mode", ip, country, deviceInfo);
-
-        await user.save();
-        logger.info("Login successful", { userId: user._id, ip, country });
-
-        return res.json({
-            accessToken,
-            refreshToken,
-            csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
-            user: sanitizeUser(user),
-        });
-    })
+    }),
 ];
 
-export const verifyDevice = [
+exports.verifyDevice = [
+    setSecurityHeaders,
     validate([
-        body("otp").isLength({ min: 6, max: 6 }).withMessage("OTP must be 6 characters"),
-        body("fingerprint").notEmpty().withMessage("Device fingerprint is required"),
-        body("usernameOrEmail").notEmpty().withMessage("Username or email is required"),
+        body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 characters'),
+        body('fingerprint').notEmpty().withMessage('Device fingerprint is required'),
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
     ]),
     asyncHandler(async (req, res) => {
         const { otp, fingerprint, usernameOrEmail } = req.body;
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : "unknown";
-        const deviceInfo = req.headers["user-agent"];
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        const user = await Users.findOne({
-            $or: [{ email: usernameOrEmail }, { username: usernameOrEmail }],
-            deviceVerifyFingerprint: fingerprint,
-            deviceVerifyExpires: { $gt: Date.now() },
+        logger.info('Verify device route accessed', {
+            body: { usernameOrEmail, fingerprint, otp: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
         });
 
-        if (!user) {
-            logger.warn("Invalid or expired device verification", {
-                ip,
-                usernameOrEmail,
-                fingerprint,
-                currentTime: new Date(),
+        try {
+            const user = await Users.findOne({
+                $or: [{ email: usernameOrEmail }, { username: usernameOrEmail }],
+                deviceVerifyFingerprint: fingerprint,
+                deviceVerifyExpires: { $gt: Date.now() },
             });
-            return res.status(400).json({ message: "Invalid or expired verification" });
+
+            if (!user) {
+                logger.warn('Invalid or expired device verification', {
+                    usernameOrEmail,
+                    fingerprint,
+                    ip,
+                    country,
+                    deviceInfo,
+                    timestamp: new Date().toISOString(),
+                });
+                return res.status(400).json({ message: 'Invalid or expired verification' });
+            }
+
+            const isMatch = await bcrypt.compare(otp, user.deviceVerifyToken);
+            if (!isMatch) {
+                logger.warn('Invalid OTP', { userId: user._id, ip, country, deviceInfo });
+                return res.status(400).json({ message: 'Invalid OTP' });
+            }
+
+            user.deviceVerifyToken = undefined;
+            user.deviceVerifyExpires = undefined;
+            user.deviceVerifyFingerprint = undefined;
+
+            user.lastLogin = new Date();
+            user.lastLoginIp = ip;
+            user.lastLoginDevice = deviceInfo;
+            await user.cleanSessions();
+
+            const accessToken = await user.generateAccessToken();
+            const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
+            await user.save();
+
+            logger.info('Device verified successfully', { userId: user._id, username: user.username, ip, country, deviceInfo });
+            res.json({
+                accessToken,
+                refreshToken,
+                csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+                user: sanitizeUser(user),
+            });
+        } catch (error) {
+            logger.error('Verify device error', {
+                error: error.message,
+                stack: error.stack,
+                usernameOrEmail,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during device verification' });
         }
-
-        const isMatch = await bcrypt.compare(otp, user.deviceVerifyToken);
-        if (!isMatch) {
-            logger.warn("Invalid OTP", { userId: user._id, ip });
-            return res.status(400).json({ message: "Invalid OTP" });
-        }
-
-        user.deviceVerifyToken = undefined;
-        user.deviceVerifyExpires = undefined;
-        user.deviceVerifyFingerprint = undefined;
-
-        user.lastLogin = new Date();
-        user.lastLoginIp = ip;
-        user.lastLoginDevice = deviceInfo;
-        await user.cleanSessions();
-
-        const accessToken = await user.generateAccessToken();
-        const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
-        await user.save();
-
-        logger.info("Device verified successfully", { userId: user._id, fingerprint, ip });
-
-        res.json({
-            accessToken,
-            refreshToken,
-            csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
-            user: sanitizeUser(user),
-        });
-    })
+    }),
 ];
 
-export const refreshToken = [
+exports.refreshToken = [
+    setSecurityHeaders,
     validate([
-        body("refreshToken").notEmpty().withMessage("Refresh token is required"),
-        body("fingerprint").custom((value) => DEV_MODE || value).withMessage("Device fingerprint is required"),
+        body('refreshToken').notEmpty().withMessage('Refresh token is required'),
+        body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
     ]),
     asyncHandler(async (req, res) => {
         const { refreshToken, fingerprint } = req.body;
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : "unknown";
-        const deviceInfo = req.headers["user-agent"];
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        if (await isBlacklisted(refreshToken)) {
-            logger.warn("Blacklisted refresh token", { ip, route: req.originalUrl });
-            return res.status(401).json({ message: "Invalid token" });
-        }
-
-        const payload = jwt.verify(refreshToken, publicKey, {
-            algorithms: ["RS256"],
-            issuer: ISSUER,
-            audience: AUDIENCE,
+        logger.info('Refresh token route accessed', {
+            body: { fingerprint, refreshToken: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
         });
-        const user = await Users.findById(payload.userId);
-        if (!user) {
-            logger.warn("User not found for refresh token", { userId: payload.userId, ip, route: req.originalUrl });
-            return res.status(404).json({ message: "User not found" });
-        }
 
-        const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken);
-        if (sessionIndex === -1) {
-            logger.warn("Invalid refresh token", { userId: user._id, ip, route: req.originalUrl });
-            return res.status(401).json({ message: "Invalid token" });
-        }
-        const session = user.sessions[sessionIndex];
+        try {
+            if (await isBlacklisted(refreshToken)) {
+                logger.warn('Blacklisted refresh token', { ip, country, deviceInfo });
+                return res.status(401).json({ message: 'Invalid token' });
+            }
 
-        if (!DEV_MODE && fingerprint && session.fingerprint !== fingerprint) {
-            const trustedFingerprints = user.sessions.map(s => s.fingerprint);
-            if (!trustedFingerprints.includes(fingerprint)) {
-                await sendSuspiciousActivityEmail(user.email, {
-                    ip,
-                    country,
-                    deviceInfo,
-                    message: "New device detected during refresh. Re-login required.",
-                });
+            const payload = jwt.verify(refreshToken, publicKey, {
+                algorithms: ['RS256'],
+                issuer: ISSUER,
+                audience: AUDIENCE,
+            });
+            const user = await Users.findById(payload.userId);
+            if (!user) {
+                logger.warn('User not found for refresh token', { userId: payload.userId, ip, country, deviceInfo });
+                return res.status(404).json({ message: 'User not found' });
+            }
+
+            const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken);
+            if (sessionIndex === -1) {
+                logger.warn('Invalid refresh token', { userId: user._id, ip, country, deviceInfo });
+                return res.status(401).json({ message: 'Invalid token' });
+            }
+            const session = user.sessions[sessionIndex];
+
+            if (!DEV_MODE && fingerprint && session.fingerprint !== fingerprint) {
+                const trustedFingerprints = user.sessions.map(s => s.fingerprint);
+                if (!trustedFingerprints.includes(fingerprint)) {
+                    await sendSuspiciousActivityEmail(user.email, {
+                        ip,
+                        country,
+                        deviceInfo,
+                        message: 'New device detected during refresh. Re-login required.',
+                    });
+                    user.sessions = [];
+                    await user.save();
+                    logger.warn('Fingerprint mismatch, sessions cleared', { userId: user._id, ip, country, deviceInfo });
+                    return res.status(401).json({ message: 'New device detected. Please re-login to verify.' });
+                }
+            }
+
+            if (session.used) {
                 user.sessions = [];
                 await user.save();
-                logger.warn("Fingerprint mismatch, sessions cleared", { userId: user._id, ip });
-                return res.status(401).json({ message: "New device detected. Please re-login to verify." });
+                logger.warn('Token reuse detected, sessions cleared', { userId: user._id, ip, country, deviceInfo });
+                return res.status(401).json({ message: 'Token reuse detected - all sessions invalidated' });
             }
-        }
 
-        if (session.used) {
-            user.sessions = [];
+            user.sessions[sessionIndex].used = true;
+            const newRefresh = await user.generateRefreshToken(fingerprint || session.fingerprint, ip, country, deviceInfo);
+            await user.cleanSessions();
             await user.save();
-            logger.warn("Token reuse detected, sessions cleared", { userId: user._id, ip, route: req.originalUrl });
-            return res.status(401).json({ message: "Token reuse detected - all sessions invalidated" });
+
+            const newAccess = await user.generateAccessToken();
+            logger.info('Refresh token rotated successfully', { userId: user._id, ip, country, deviceInfo });
+
+            res.json({
+                accessToken: newAccess,
+                refreshToken: newRefresh,
+                csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+            });
+        } catch (error) {
+            logger.error('Refresh token error', {
+                error: error.message,
+                stack: error.stack,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during token refresh' });
         }
-
-        user.sessions[sessionIndex].used = true;
-        const newRefresh = await user.generateRefreshToken(fingerprint || session.fingerprint, ip, country, deviceInfo);
-        await user.cleanSessions();
-        await user.save();
-
-        const newAccess = await user.generateAccessToken();
-        logger.info("Refresh token rotated successfully", { userId: user._id, ip, country });
-
-        res.json({
-            accessToken: newAccess,
-            refreshToken: newRefresh,
-            csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
-        });
-    })
+    }),
 ];
 
-export const logout = [
-    validate([body("refreshToken").notEmpty().withMessage("Refresh token is required")]),
+exports.logout = [
+    setSecurityHeaders,
+    validate([body('refreshToken').notEmpty().withMessage('Refresh token is required')]),
     asyncHandler(async (req, res) => {
         const { refreshToken } = req.body;
         const ip = requestIp.getClientIp(req);
-        const payload = jwt.verify(refreshToken, publicKey, { algorithms: ["RS256"] });
-        const user = await Users.findById(payload.userId);
-        if (user) {
-            user.sessions = user.sessions.filter((s) => s.token !== refreshToken);
-            await blacklistToken(refreshToken);
-            await user.save();
-            logger.info("User logged out successfully", { userId: user._id, ip, route: req.originalUrl });
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+        logger.info('Logout route accessed', {
+            body: { refreshToken: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const payload = jwt.verify(refreshToken, publicKey, { algorithms: ['RS256'] });
+            const user = await Users.findById(payload.userId);
+            if (user) {
+                user.sessions = user.sessions.filter((s) => s.token !== refreshToken);
+                await blacklistToken(refreshToken);
+                await user.save();
+                logger.info('User logged out successfully', { userId: user._id, ip, country, deviceInfo });
+            }
+            res.json({ message: 'Logged out successfully' });
+        } catch (error) {
+            logger.error('Logout error', {
+                error: error.message,
+                stack: error.stack,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during logout' });
         }
-        res.json({ message: "Logged out successfully" });
-    })
+    }),
 ];
 
-export const requestPasswordReset = [
-    validate([body("email").isEmail().withMessage("Invalid email format")]),
+exports.requestPasswordReset = [
+    setSecurityHeaders,
+    validate([body('email').isEmail().withMessage('Invalid email format')]),
     asyncHandler(async (req, res) => {
         const { email } = req.body;
         const ip = requestIp.getClientIp(req);
-        const user = await Users.findOne({ email });
-        if (!user) {
-            logger.warn("User not found for password reset", { email, ip, route: req.originalUrl });
-            return res.status(404).json({ message: "User not found" });
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+        logger.info('Request password reset accessed', {
+            body: { email },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const user = await Users.findOne({ email });
+            if (!user) {
+                logger.warn('User not found for password reset', { email, ip, country, deviceInfo });
+                return res.status(404).json({ message: 'User not found' });
+            }
+            if (!user.isActive) {
+                logger.warn('Email not verified for password reset', { email, ip, country, deviceInfo });
+                return res.status(401).json({ message: 'Email not verified' });
+            }
+
+            const resetToken = await user.generatePasswordResetToken();
+            await user.save();
+
+            const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+            const emailSent = await sendPasswordResetEmail(email, resetUrl);
+
+            if (!emailSent) {
+                logger.error('Failed to send password reset email', { email, ip, country, deviceInfo });
+                return res.status(500).json({ message: 'Failed to send password reset email' });
+            }
+
+            logger.info('Password reset email sent', { email, ip, country, deviceInfo });
+            res.json({ message: 'Password reset email sent. Please check your inbox.' });
+        } catch (error) {
+            logger.error('Request password reset error', {
+                error: error.message,
+                stack: error.stack,
+                email,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during password reset request' });
         }
-        if (!user.isActive) {
-            logger.warn("Email not verified for password reset", { email, ip, route: req.originalUrl });
-            return res.status(401).json({ message: "Email not verified" });
-        }
-
-        const resetToken = await user.generatePasswordResetToken();
-        await user.save();
-
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-        const emailSent = await sendPasswordResetEmail(email, resetUrl);
-
-        if (!emailSent) {
-            logger.error("Failed to send password reset email", { email, ip, route: req.originalUrl });
-            return res.status(500).json({ message: "Failed to send password reset email" });
-        }
-
-        logger.info("Password reset email sent", { email, ip, route: req.originalUrl });
-        res.json({ message: "Password reset email sent. Please check your inbox." });
-    })
+    }),
 ];
 
-export const resetPassword = [
+exports.resetPassword = [
+    setSecurityHeaders,
     validate([
-        query("token").notEmpty().withMessage("Reset token is required"),
-        body("newPassword")
+        query('token').notEmpty().withMessage('Reset token is required'),
+        body('newPassword')
             .matches(/^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
-            .withMessage("Password must be at least 8 characters, include a letter, number, and special character"),
-        body("confirmPassword")
+            .withMessage('Password must be at least 8 characters, include a letter, number, and special character'),
+        body('confirmPassword')
             .custom((value, { req }) => value === req.body.newPassword)
-            .withMessage("Passwords do not match"),
+            .withMessage('Passwords do not match'),
     ]),
     asyncHandler(async (req, res) => {
         const { token } = req.query;
         const { newPassword } = req.body;
         const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        const user = await Users.findOne({
-            passwordResetToken: token,
-            passwordResetExpires: { $gt: Date.now() },
+        logger.info('Reset password route accessed', {
+            body: { newPassword: '[REDACTED]', confirmPassword: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
         });
-        if (!user) {
-            logger.warn("Invalid or expired reset token", { ip, route: req.originalUrl });
-            return res.status(400).json({ message: "Invalid or expired reset token" });
+
+        try {
+            const user = await Users.findOne({
+                passwordResetToken: token,
+                passwordResetExpires: { $gt: Date.now() },
+            });
+            if (!user) {
+                logger.warn('Invalid or expired reset token', { ip, country, deviceInfo });
+                return res.status(400).json({ message: 'Invalid or expired reset token' });
+            }
+
+            const isSamePassword = await bcrypt.compare(newPassword, user.password);
+            if (isSamePassword) {
+                logger.warn('New password same as old', { userId: user._id, ip, country, deviceInfo });
+                return res.status(400).json({ message: 'New password cannot be the same as the old password' });
+            }
+
+            user.password = newPassword;
+            user.passwordResetToken = undefined;
+            user.passwordResetExpires = undefined;
+            await user.save();
+
+            logger.info('Password reset successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            res.json({ message: 'Password reset successful! You can now log in with your new password.' });
+        } catch (error) {
+            logger.error('Reset password error', {
+                error: error.message,
+                stack: error.stack,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during password reset' });
         }
-
-        const isSamePassword = await bcrypt.compare(newPassword, user.password);
-        if (isSamePassword) {
-            logger.warn("New password same as old", { userId: user._id, ip, route: req.originalUrl });
-            return res.status(400).json({ message: "New password cannot be the same as the old password" });
-        }
-
-        user.password = newPassword;
-        user.passwordResetToken = undefined;
-        user.passwordResetExpires = undefined;
-        await user.save();
-
-        logger.info("Password reset successfully", { userId: user._id, email: user.email, ip, route: req.originalUrl });
-        res.json({ message: "Password reset successful! You can now log in with your new password." });
-    })
+    }),
 ];
 
-export const updateProfileImage = [
-    validate([body("image").notEmpty().withMessage("Image is required")]),
+exports.updateProfileImage = [
+    setSecurityHeaders,
+    validate([body('image').notEmpty().withMessage('Image is required')]),
     asyncHandler(async (req, res) => {
         const { image } = req.body;
         const userId = req.user?.id;
         const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        const user = await Users.findById(userId);
-        if (!user) {
-            logger.warn("User not found for profile image update", { userId, ip, route: req.originalUrl });
-            return res.status(404).json({ message: "User not found" });
-        }
-        if (!user.isActive) {
-            logger.warn("Email not verified for profile image update", { userId, ip, route: req.originalUrl });
-            return res.status(403).json({ message: "Only verified users can update profile image" });
-        }
-
-        const uploaded = await cloudinary.uploader.upload(image, {
-            folder: "profile_images",
-            public_id: `user_${user._id}_${Date.now()}`,
-            overwrite: true,
-            resource_type: "auto",
+        logger.info('Update profile image route accessed', {
+            userId,
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
         });
 
-        user.profileImage = uploaded.secure_url;
-        await user.save();
+        try {
+            const user = await Users.findById(userId);
+            if (!user) {
+                logger.warn('User not found for profile image update', { userId, ip, country, deviceInfo });
+                return res.status(404).json({ message: 'User not found' });
+            }
+            if (!user.isActive) {
+                logger.warn('Email not verified for profile image update', { userId, ip, country, deviceInfo });
+                return res.status(403).json({ message: 'Only verified users can update profile image' });
+            }
 
-        logger.info("Profile image updated successfully", { userId, email: user.email, ip, route: req.originalUrl });
-        res.status(200).json({
-            message: "Profile image updated successfully",
-            profileImage: user.profileImage,
-        });
-    })
+            const uploaded = await cloudinary.uploader.upload(image, {
+                folder: 'profile_images',
+                public_id: `user_${user._id}_${Date.now()}`,
+                overwrite: true,
+                resource_type: 'auto',
+            });
+
+            user.profileImage = uploaded.secure_url;
+            await user.save();
+
+            logger.info('Profile image updated successfully', { userId, email: user.email, ip, country, deviceInfo });
+            res.status(200).json({
+                message: 'Profile image updated successfully',
+                profileImage: user.profileImage,
+            });
+        } catch (error) {
+            logger.error('Update profile image error', {
+                error: error.message,
+                stack: error.stack,
+                userId,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during profile image update' });
+        }
+    }),
 ];
 
-export const updateUsername = [
+exports.updateUsername = [
+    setSecurityHeaders,
     validate([
-        body("newUsername")
+        body('newUsername')
             .matches(/^[a-zA-Z0-9_-]{3,}$/)
-            .withMessage("Username must be at least 3 characters, alphanumeric, underscores, or hyphens"),
+            .withMessage('Username must be at least 3 characters, alphanumeric, underscores, or hyphens'),
     ]),
     asyncHandler(async (req, res) => {
         const { newUsername } = req.body;
         const userId = req.user?.id;
         const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        const user = await Users.findById(userId);
-        if (!user) {
-            logger.warn("User not found for username update", { userId, ip, route: req.originalUrl });
-            return res.status(404).json({ message: "User not found" });
-        }
-        if (!user.isActive) {
-            logger.warn("Email not verified for username update", { userId, ip, route: req.originalUrl });
-            return res.status(403).json({ message: "Only verified users can update username" });
-        }
-
-        const existing = await Users.findOne({ username: newUsername });
-        if (existing) {
-            logger.warn("Username already taken", { userId, newUsername, ip, route: req.originalUrl });
-            return res.status(400).json({ message: "Username already taken" });
-        }
-
-        user.username = newUsername;
-        await user.save();
-
-        logger.info("Username updated successfully", { userId, username: newUsername, ip, route: req.originalUrl });
-        res.status(200).json({
-            message: "Username updated successfully",
-            username: user.username,
+        logger.info('Update username route accessed', {
+            body: { newUsername },
+            userId,
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
         });
-    })
+
+        try {
+            const user = await Users.findById(userId);
+            if (!user) {
+                logger.warn('User not found for username update', { userId, ip, country, deviceInfo });
+                return res.status(404).json({ message: 'User not found' });
+            }
+            if (!user.isActive) {
+                logger.warn('Email not verified for username update', { userId, ip, country, deviceInfo });
+                return res.status(403).json({ message: 'Only verified users can update username' });
+            }
+
+            const existing = await Users.findOne({ username: newUsername });
+            if (existing) {
+                logger.warn('Username already taken', { userId, newUsername, ip, country, deviceInfo });
+                return res.status(400).json({ message: 'Username already taken' });
+            }
+
+            user.username = newUsername;
+            await user.save();
+
+            logger.info('Username updated successfully', { userId, username: newUsername, ip, country, deviceInfo });
+            res.status(200).json({
+                message: 'Username updated successfully',
+                username: user.username,
+            });
+        } catch (error) {
+            logger.error('Update username error', {
+                error: error.message,
+                stack: error.stack,
+                userId,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during username update' });
+        }
+    }),
 ];
 
-export const getProfile = asyncHandler(async (req, res) => {
-    const ip = requestIp.getClientIp(req);
-    const user = await Users.findById(req.user.id);
+exports.getProfile = [
+    setSecurityHeaders,
+    asyncHandler(async (req, res) => {
+        const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-    if (!user) {
-        logger.warn("User not found for profile fetch", { userId: req.user.id, ip, route: req.originalUrl });
-        return res.status(404).json({ message: "User not found" });
-    }
+        logger.info('Get profile route accessed', {
+            userId: req.user.id,
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
 
-    logger.info("Profile fetched successfully", { userId: user._id, email: user.email, ip, route: req.originalUrl });
-    res.status(200).json({
-        message: "Profile fetched successfully",
-        user: sanitizeUser(user),
-    });
-});
+        try {
+            const user = await Users.findById(req.user.id);
+            if (!user) {
+                logger.warn('User not found for profile fetch', { userId: req.user.id, ip, country, deviceInfo });
+                return res.status(404).json({ message: 'User not found' });
+            }
 
-export const getAdminDashboard = asyncHandler(async (req, res) => {
-    const ip = requestIp.getClientIp(req);
-    const users = await Users.find().select("username email role isActive createdAt");
+            logger.info('Profile fetched successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            res.status(200).json({
+                message: 'Profile fetched successfully',
+                user: sanitizeUser(user),
+            });
+        } catch (error) {
+            logger.error('Get profile error', {
+                error: error.message,
+                stack: error.stack,
+                userId: req.user.id,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during profile fetch' });
+        }
+    }),
+];
 
-    logger.info("Admin dashboard accessed", { userId: req.user.id, email: req.user.email, ip, route: req.originalUrl });
-    res.status(200).json({
-        message: `Admin access granted for ${req.user.email}`,
-        totalUsers: users.length,
-        users,
-    });
-});
+exports.getAdminDashboard = [
+    setSecurityHeaders,
+    asyncHandler(async (req, res) => {
+        const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+        logger.info('Admin dashboard accessed', {
+            userId: req.user.id,
+            email: req.user.email,
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const users = await Users.find().select('username email role isActive createdAt');
+            logger.info('Admin dashboard fetched successfully', { userId: req.user.id, ip, country, deviceInfo });
+            res.status(200).json({
+                message: `Admin access granted for ${req.user.email}`,
+                totalUsers: users.length,
+                users,
+            });
+        } catch (error) {
+            logger.error('Admin dashboard error', {
+                error: error.message,
+                stack: error.stack,
+                userId: req.user.id,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during admin dashboard fetch' });
+        }
+    }),
+];
