@@ -332,8 +332,12 @@ export const verifyDevice = [
         });
 
         try {
+            // Case-insensitive query for usernameOrEmail
             const user = await Users.findOne({
-                $or: [{ email: usernameOrEmail }, { username: usernameOrEmail }],
+                $or: [
+                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                ],
                 deviceVerifyFingerprint: fingerprint,
                 deviceVerifyExpires: { $gt: Date.now() },
             });
@@ -346,6 +350,14 @@ export const verifyDevice = [
                     country,
                     deviceInfo,
                     timestamp: new Date().toISOString(),
+                    usersFound: await Users.find({ // Debug: Check if user exists
+                        $or: [
+                            { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                            { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                        ],
+                    }).countDocuments(),
+                    fingerprintMatch: await Users.find({ deviceVerifyFingerprint: fingerprint }).countDocuments(),
+                    expiresValid: await Users.find({ deviceVerifyExpires: { $gt: Date.now() } }).countDocuments(),
                 });
                 return res.status(400).json({ message: 'Invalid or expired verification' });
             }
