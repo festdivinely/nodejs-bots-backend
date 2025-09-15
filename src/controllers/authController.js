@@ -33,17 +33,17 @@ if (!privateKey || !publicKey) {
 }
 
 // Input validation middleware
-const validate = (validations) => {
-    return asyncHandler(async (req, res, next) => {
-        await Promise.all(validations.map(validation => validation.run(req)));
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            logger.warn("Input validation failed", { errors: errors.array(), route: req.originalUrl });
-            return res.status(400).json({ message: "Invalid input", errors: errors.array() });
-        }
-        next();
-    });
-};
+// const validate = (validations) => {
+//     return asyncHandler(async (req, res, next) => {
+//         await Promise.all(validations.map(validation => validation.run(req)));
+//         const errors = validationResult(req);
+//         if (!errors.isEmpty()) {
+//             logger.warn("Input validation failed", { errors: errors.array(), route: req.originalUrl });
+//             return res.status(400).json({ message: "Invalid input", errors: errors.array() });
+//         }
+//         next();
+//     });
+// };
 
 // Blacklist tokens
 const blacklistToken = async (token) => {
@@ -61,12 +61,50 @@ const isBlacklisted = async (token) => {
     return false;
 };
 
-// ======================= Register =======================
+
+const usernameValidation = [
+    body('username')
+        .trim()
+        .isLength({ min: 3, max: 30 })
+        .withMessage('Username must be between 3 and 30 characters.')
+        .matches(/^[a-zA-Z0-9][a-zA-Z0-9._-]{1,28}[a-zA-Z0-9]$/)
+        .withMessage('Username must start and end with a letter or number, and can only contain letters, numbers, underscores, hyphens, or single periods.')
+        .not()
+        .matches(/([._-])\1/)
+        .withMessage('Username cannot contain consecutive underscores, hyphens, or periods.'),
+];
+
+const passwordValidation = [
+    body('password')
+        .trim()
+        .isLength({ min: 8, max: 50 })
+        .withMessage('Password must be between 8 and 50 characters.')
+        .matches(/^[^\s].*[^\s]$/)
+        .withMessage('Password cannot start or end with a space.')
+        .matches(/^[A-Za-z0-9@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]*$/)
+        .withMessage('Password can only contain letters, numbers, and common special characters.')
+        .not()
+        .matches(/([@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])\1{2,}/)
+        .withMessage('Password cannot contain three or more consecutive special characters.'),
+];
+
+const validate = (validations) => [
+    ...validations,
+    (req, res, next) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            logger.warn('Input validation failed', { errors: errors.array(), route: req.originalUrl });
+            return res.status(400).json({ errors: errors.array() });
+        }
+        next();
+    },
+];
+
 export const register = [
     validate([
-        body("username").matches(/^[a-zA-Z0-9_-]{3,}$/).withMessage("Username must be at least 3 characters, alphanumeric, underscores, or hyphens"),
-        body("email").isEmail().withMessage("Invalid email format"),
-        body("password").matches(/^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/).withMessage("Password must be at least 8 characters, include a letter, number, and special character"),
+        ...usernameValidation,
+        body('email').isEmail().withMessage('Invalid email format'),
+        ...passwordValidation,
     ]),
     asyncHandler(async (req, res) => {
         const { username, email, password } = req.body;
@@ -74,8 +112,8 @@ export const register = [
 
         const exists = await Users.findOne({ $or: [{ email }, { username }] });
         if (exists) {
-            logger.warn("User already exists", { email, username, ip, route: req.originalUrl });
-            return res.status(400).json({ message: "User already exists" });
+            logger.warn('User already exists', { email, username, ip, route: req.originalUrl });
+            return res.status(400).json({ message: 'User already exists' });
         }
 
         const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
@@ -87,19 +125,19 @@ export const register = [
             isActive: false,
         });
 
-        await user.generateResetToken("email_verification");
+        await user.generateResetToken('email_verification');
         await user.save();
-        logger.info("User registered successfully", { email, userId: user._id, ip, route: req.originalUrl });
+        logger.info('User registered successfully', { email, userId: user._id, ip, route: req.originalUrl });
 
         const verifyUrl = `${process.env.NODE_JS_API_URL}/api/auth/verify-email?token=${user.emailVerifyToken}`;
         const emailSent = await sendVerificationEmail(email, verifyUrl);
         if (!emailSent) {
-            logger.error("Failed to send verification email", { email, ip, route: req.originalUrl });
-            return res.status(500).json({ message: "Failed to send verification email" });
+            logger.error('Failed to send verification email', { email, ip, route: req.originalUrl });
+            return res.status(500).json({ message: 'Failed to send verification email' });
         }
 
-        res.status(201).json({ message: "Verification email sent. Please check your inbox." });
-    })
+        res.status(201).json({ message: 'Verification email sent. Please check your inbox.' });
+    }),
 ];
 
 // ======================= Verify Email =======================
