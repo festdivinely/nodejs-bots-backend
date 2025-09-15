@@ -98,7 +98,7 @@ const validate = (validations) => [
     },
 ];
 
-exports.register = [
+export const register = [
     setSecurityHeaders,
     validate([
         ...usernameValidation,
@@ -162,7 +162,7 @@ exports.register = [
     }),
 ];
 
-exports.verifyEmail = [
+export const verifyEmail = [
     setSecurityHeaders,
     validate([
         body('token').notEmpty().withMessage('Verification token is required'),
@@ -214,7 +214,7 @@ exports.verifyEmail = [
     }),
 ];
 
-exports.login = [
+export const login = [
     setSecurityHeaders,
     validate([
         body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
@@ -309,7 +309,7 @@ exports.login = [
     }),
 ];
 
-exports.verifyDevice = [
+export const verifyDevice = [
     setSecurityHeaders,
     validate([
         body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 characters'),
@@ -391,7 +391,7 @@ exports.verifyDevice = [
     }),
 ];
 
-exports.refreshToken = [
+export const refreshToken = [
     setSecurityHeaders,
     validate([
         body('refreshToken').notEmpty().withMessage('Refresh token is required'),
@@ -486,7 +486,7 @@ exports.refreshToken = [
     }),
 ];
 
-exports.logout = [
+export const logout = [
     setSecurityHeaders,
     validate([body('refreshToken').notEmpty().withMessage('Refresh token is required')]),
     asyncHandler(async (req, res) => {
@@ -528,7 +528,7 @@ exports.logout = [
     }),
 ];
 
-exports.requestPasswordReset = [
+export const requestPasswordReset = [
     setSecurityHeaders,
     validate([body('email').isEmail().withMessage('Invalid email format')]),
     asyncHandler(async (req, res) => {
@@ -585,7 +585,7 @@ exports.requestPasswordReset = [
     }),
 ];
 
-exports.resetPassword = [
+export const resetPassword = [
     setSecurityHeaders,
     validate([
         query('token').notEmpty().withMessage('Reset token is required'),
@@ -649,7 +649,7 @@ exports.resetPassword = [
     }),
 ];
 
-exports.updateProfileImage = [
+export const updateProfileImage = [
     setSecurityHeaders,
     validate([body('image').notEmpty().withMessage('Image is required')]),
     asyncHandler(async (req, res) => {
@@ -709,7 +709,7 @@ exports.updateProfileImage = [
     }),
 ];
 
-exports.updateUsername = [
+export const updateUsername = [
     setSecurityHeaders,
     validate([
         body('newUsername')
@@ -773,7 +773,7 @@ exports.updateUsername = [
     }),
 ];
 
-exports.getProfile = [
+export const getProfile = [
     setSecurityHeaders,
     asyncHandler(async (req, res) => {
         const ip = requestIp.getClientIp(req);
@@ -816,7 +816,7 @@ exports.getProfile = [
     }),
 ];
 
-exports.getAdminDashboard = [
+export const getAdminDashboard = [
     setSecurityHeaders,
     asyncHandler(async (req, res) => {
         const ip = requestIp.getClientIp(req);

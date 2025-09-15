@@ -137,4 +137,4 @@ router.get('/admin', httpLogger, logRequest, protect, requireRole(['admin']), ge
 router.put('/profile/image', httpLogger, logRequest, protect, csrfProtect, updateProfileImage);
 router.put('/profile/username', httpLogger, logRequest, protect, csrfProtect, updateUsername);
 
-module.exports = router;
+export default router;
