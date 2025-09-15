@@ -48,7 +48,6 @@ const isBlacklisted = async (token) => {
     return false;
 };
 
-
 // Middleware to add security headers
 const setSecurityHeaders = (req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -116,14 +115,12 @@ export const register = [
         const ip = requestIp.getClientIp(req);
 
         try {
-            // Check if user already exists
             const exists = await Users.findOne({ $or: [{ email }, { username }] });
             if (exists) {
                 logger.warn('User already exists', { email, username, ip, route: req.originalUrl });
                 return res.status(400).json({ message: 'User with this email or username already exists' });
             }
 
-            // Create user
             const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
             const user = new Users({
                 username,
@@ -133,19 +130,17 @@ export const register = [
                 isActive: false,
             });
 
-            // Generate verification token
-            await user.generateResetToken('email_verification');
+            const token = await user.generateEmailVerifyToken();
             await user.save();
-            logger.info('User registered successfully', { email, userId: user._id, ip, route: req.originalUrl });
+            logger.info('User registered', { email, userId: user._id, ip, route: req.originalUrl });
 
-            // Send verification email with token
-            const emailSent = await sendVerificationEmail(email, null, user.emailVerifyToken);
+            const emailSent = await sendVerificationEmail(email, null, token);
             if (!emailSent) {
                 logger.error('Failed to send verification email', { email, ip, route: req.originalUrl });
                 return res.status(500).json({ message: 'Failed to send verification email' });
             }
 
-            res.status(201).json({ message: 'Verification email sent. Please check your inbox and paste the token in the app.' });
+            res.status(201).json({ message: 'Verification email sent. Tap the token in the email to copy it and paste it in the app.' });
         } catch (error) {
             logger.error('Registration error', { error: error.message, email, ip, route: req.originalUrl });
             res.status(500).json({ message: 'Server error during registration' });
@@ -157,16 +152,13 @@ export const register = [
 export const verifyEmail = [
     setSecurityHeaders,
     validate([
-        body('token')
-            .notEmpty()
-            .withMessage('Verification token is required'),
+        body('token').notEmpty().withMessage('Verification token is required'),
     ]),
     asyncHandler(async (req, res) => {
         const { token } = req.body;
         const ip = requestIp.getClientIp(req);
 
         try {
-            // Find user by token and check expiry
             const user = await Users.findOne({
                 emailVerifyToken: token,
                 emailVerifyExpires: { $gt: Date.now() },
@@ -177,13 +169,12 @@ export const verifyEmail = [
                 return res.status(400).json({ message: 'Invalid or expired verification token' });
             }
 
-            // Update user status
             user.emailVerifyToken = undefined;
             user.emailVerifyExpires = undefined;
             user.isActive = true;
             await user.save();
 
-            logger.info('Email verified successfully', { userId: user._id, email: user.email, ip, route: req.originalUrl });
+            logger.info('Email verified', { userId: user._id, email: user.email, ip, route: req.originalUrl });
             res.status(200).json({ message: 'Email verified successfully! You can now log in.' });
         } catch (error) {
             logger.error('Email verification error', { error: error.message, ip, route: req.originalUrl });
@@ -192,7 +183,7 @@ export const verifyEmail = [
     }),
 ];
 
-// ======================= Login =======================
+// Other endpoints (unchanged)
 export const login = [
     validate([
         body("usernameOrEmail").notEmpty().withMessage("Username or email is required"),
@@ -215,14 +206,13 @@ export const login = [
             return res.status(400).json({ message: "Invalid credentials or inactive account" });
         }
 
-        // 2FA: If enabled, verify TOTP
         if (user.twoFactorEnabled && !DEV_MODE) {
             if (!totp) {
                 logger.warn("TOTP required", { userId: user._id, ip });
                 return res.status(400).json({ message: "TOTP required", requiresTotp: true });
             }
             const isValid = speakeasy.totp.verify({
-                secret: user.twoFactorSecret, // Assume stored in model
+                secret: user.twoFactorSecret,
                 encoding: "base32",
                 token: totp,
             });
@@ -232,7 +222,6 @@ export const login = [
             }
         }
 
-        // New device detection
         const existingFingerprints = user.sessions.map(s => s.fingerprint);
         const isNewDevice = fingerprint && !existingFingerprints.includes(fingerprint) && !DEV_MODE;
 
@@ -247,7 +236,6 @@ export const login = [
             return res.status(200).json({ message: "New device detected. Verify with OTP sent to your email.", requiresOtp: true });
         }
 
-        // Update login audit fields
         user.lastLogin = new Date();
         user.lastLoginIp = ip;
         user.lastLoginDevice = deviceInfo;
@@ -268,7 +256,6 @@ export const login = [
     })
 ];
 
-// ======================= Verify Device =======================
 export const verifyDevice = [
     validate([
         body("otp").isLength({ min: 6, max: 6 }).withMessage("OTP must be 6 characters"),
@@ -304,12 +291,10 @@ export const verifyDevice = [
             return res.status(400).json({ message: "Invalid OTP" });
         }
 
-        // Clear temp fields
         user.deviceVerifyToken = undefined;
         user.deviceVerifyExpires = undefined;
         user.deviceVerifyFingerprint = undefined;
 
-        // Update audit fields
         user.lastLogin = new Date();
         user.lastLoginIp = ip;
         user.lastLoginDevice = deviceInfo;
@@ -330,7 +315,6 @@ export const verifyDevice = [
     })
 ];
 
-// ======================= Refresh Token =======================
 export const refreshToken = [
     validate([
         body("refreshToken").notEmpty().withMessage("Refresh token is required"),
@@ -366,7 +350,6 @@ export const refreshToken = [
         }
         const session = user.sessions[sessionIndex];
 
-        // Fingerprint mismatch check
         if (!DEV_MODE && fingerprint && session.fingerprint !== fingerprint) {
             const trustedFingerprints = user.sessions.map(s => s.fingerprint);
             if (!trustedFingerprints.includes(fingerprint)) {
@@ -390,7 +373,6 @@ export const refreshToken = [
             return res.status(401).json({ message: "Token reuse detected - all sessions invalidated" });
         }
 
-        // Rotate token
         user.sessions[sessionIndex].used = true;
         const newRefresh = await user.generateRefreshToken(fingerprint || session.fingerprint, ip, country, deviceInfo);
         await user.cleanSessions();
@@ -407,7 +389,6 @@ export const refreshToken = [
     })
 ];
 
-// ======================= Logout =======================
 export const logout = [
     validate([body("refreshToken").notEmpty().withMessage("Refresh token is required")]),
     asyncHandler(async (req, res) => {
@@ -425,7 +406,6 @@ export const logout = [
     })
 ];
 
-// ======================= Request Password Reset =======================
 export const requestPasswordReset = [
     validate([body("email").isEmail().withMessage("Invalid email format")]),
     asyncHandler(async (req, res) => {
@@ -441,7 +421,7 @@ export const requestPasswordReset = [
             return res.status(401).json({ message: "Email not verified" });
         }
 
-        const resetToken = await user.generateResetToken("password_reset");
+        const resetToken = await user.generatePasswordResetToken();
         await user.save();
 
         const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
@@ -457,7 +437,6 @@ export const requestPasswordReset = [
     })
 ];
 
-// ======================= Reset Password =======================
 export const resetPassword = [
     validate([
         query("token").notEmpty().withMessage("Reset token is required"),
@@ -488,7 +467,7 @@ export const resetPassword = [
             return res.status(400).json({ message: "New password cannot be the same as the old password" });
         }
 
-        user.password = newPassword; // hashed by pre-save hook
+        user.password = newPassword;
         user.passwordResetToken = undefined;
         user.passwordResetExpires = undefined;
         await user.save();
@@ -498,7 +477,6 @@ export const resetPassword = [
     })
 ];
 
-// ======================= Update Profile Image =======================
 export const updateProfileImage = [
     validate([body("image").notEmpty().withMessage("Image is required")]),
     asyncHandler(async (req, res) => {
@@ -534,7 +512,6 @@ export const updateProfileImage = [
     })
 ];
 
-// ======================= Update Username =======================
 export const updateUsername = [
     validate([
         body("newUsername")
@@ -573,7 +550,6 @@ export const updateUsername = [
     })
 ];
 
-// ======================= Get User Profile =======================
 export const getProfile = asyncHandler(async (req, res) => {
     const ip = requestIp.getClientIp(req);
     const user = await Users.findById(req.user.id);
@@ -590,7 +566,6 @@ export const getProfile = asyncHandler(async (req, res) => {
     });
 });
 
-// ======================= Admin Dashboard =======================
 export const getAdminDashboard = asyncHandler(async (req, res) => {
     const ip = requestIp.getClientIp(req);
     const users = await Users.find().select("username email role isActive createdAt");

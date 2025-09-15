@@ -177,25 +177,36 @@ UserSchema.methods.generateRefreshToken = async function (fingerprint, ip, count
     }
 };
 
-UserSchema.methods.generateResetToken = function (purpose) {
+UserSchema.methods.generateEmailVerifyToken = async function () {
+    try {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let token = "";
+        for (let i = 0; i < 6; i++) {
+            token += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        this.emailVerifyToken = token;
+        this.emailVerifyExpires = new Date(Date.now() + ms("15m"));
+        logger.info("Email verification token generated", { userId: this._id.toString(), email: this.email });
+        return token;
+    } catch (error) {
+        logger.error("Failed to generate email verification token", { userId: this._id.toString(), email: this.email, error: error.message });
+        throw error;
+    }
+};
+
+UserSchema.methods.generatePasswordResetToken = async function () {
     try {
         const token = jwt.sign(
-            { userId: this._id.toString(), purpose, iss: ISSUER, aud: AUDIENCE },
+            { userId: this._id.toString(), purpose: "password_reset", iss: ISSUER, aud: AUDIENCE },
             privateKey,
             { expiresIn: "15m", algorithm: "RS256" }
         );
-        if (purpose === "password_reset") {
-            this.passwordResetToken = token;
-            this.passwordResetExpires = new Date(Date.now() + ms("15m"));
-        }
-        if (purpose === "email_verification") {
-            this.emailVerifyToken = token;
-            this.emailVerifyExpires = new Date(Date.now() + ms("15m"));
-        }
-        logger.info("Reset token generated", { userId: this._id.toString(), email: this.email, purpose });
+        this.passwordResetToken = token;
+        this.passwordResetExpires = new Date(Date.now() + ms("15m"));
+        logger.info("Password reset token generated", { userId: this._id.toString(), email: this.email });
         return token;
     } catch (error) {
-        logger.error("Failed to generate reset token", { userId: this._id.toString(), email: this.email, purpose, error: error.message });
+        logger.error("Failed to generate password reset token", { userId: this._id.toString(), email: this.email, error: error.message });
         throw error;
     }
 };

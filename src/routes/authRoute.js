@@ -64,6 +64,14 @@ const refreshLimiter = rateLimit({
     legacyHeaders: false,
 });
 
+const verifyLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 5,
+    message: "Too many verification attempts, please try again later",
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 // Middleware to log request details
 const logRequest = (req, res, next) => {
     logger.info(`${req.method} ${req.originalUrl} route accessed`, {
@@ -96,7 +104,7 @@ router.post("/request-password-reset", resetLimiter, logRequest, requestPassword
 router.post("/reset-password/:token", resetLimiter, logRequest, resetPassword);
 
 // Verify email with token
-router.get("/verify-email", logRequest, verifyEmail);
+router.post("/verify-email", verifyLimiter, logRequest, verifyEmail);
 
 // Refresh JWT access token
 router.post("/refresh-token", refreshLimiter, logRequest, refreshToken);
