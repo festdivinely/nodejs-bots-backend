@@ -23,7 +23,7 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-async function sendVerificationEmail(receiverEmail, verificationLink, token) {
+export async function sendVerificationEmail(receiverEmail, verificationLink, token) {
     /**
      * Send a verification email with a token to the specified receiver.
      * Includes a copy button for the token and instructions to paste it in the app.
@@ -147,5 +147,3 @@ async function sendVerificationEmail(receiverEmail, verificationLink, token) {
         return false;
     }
 }
-
-module.exports = sendVerificationEmail;
