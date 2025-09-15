@@ -32,19 +32,6 @@ if (!privateKey || !publicKey) {
     throw new Error("Missing PRIVATE_KEY or PUBLIC_KEY environment variables");
 }
 
-// Input validation middleware
-// const validate = (validations) => {
-//     return asyncHandler(async (req, res, next) => {
-//         await Promise.all(validations.map(validation => validation.run(req)));
-//         const errors = validationResult(req);
-//         if (!errors.isEmpty()) {
-//             logger.warn("Input validation failed", { errors: errors.array(), route: req.originalUrl });
-//             return res.status(400).json({ message: "Invalid input", errors: errors.array() });
-//         }
-//         next();
-//     });
-// };
-
 // Blacklist tokens
 const blacklistToken = async (token) => {
     if (redis) {
@@ -62,6 +49,16 @@ const isBlacklisted = async (token) => {
 };
 
 
+// Middleware to add security headers
+const setSecurityHeaders = (req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; object-src 'none';");
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+};
+
+// Validation rules for username
 const usernameValidation = [
     body('username')
         .trim()
@@ -74,6 +71,7 @@ const usernameValidation = [
         .withMessage('Username cannot contain consecutive underscores, hyphens, or periods.'),
 ];
 
+// Validation rules for password
 const passwordValidation = [
     body('password')
         .trim()
@@ -88,19 +86,26 @@ const passwordValidation = [
         .withMessage('Password cannot contain three or more consecutive special characters.'),
 ];
 
+// Validation middleware
 const validate = (validations) => [
     ...validations,
     (req, res, next) => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
-            logger.warn('Input validation failed', { errors: errors.array(), route: req.originalUrl });
-            return res.status(400).json({ errors: errors.array() });
+            logger.warn('Input validation failed', {
+                errors: errors.array(),
+                route: req.originalUrl,
+                ip: requestIp.getClientIp(req),
+            });
+            return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
         }
         next();
     },
 ];
 
+// Register endpoint
 export const register = [
+    setSecurityHeaders,
     validate([
         ...usernameValidation,
         body('email').isEmail().withMessage('Invalid email format'),
@@ -110,61 +115,81 @@ export const register = [
         const { username, email, password } = req.body;
         const ip = requestIp.getClientIp(req);
 
-        const exists = await Users.findOne({ $or: [{ email }, { username }] });
-        if (exists) {
-            logger.warn('User already exists', { email, username, ip, route: req.originalUrl });
-            return res.status(400).json({ message: 'User already exists' });
+        try {
+            // Check if user already exists
+            const exists = await Users.findOne({ $or: [{ email }, { username }] });
+            if (exists) {
+                logger.warn('User already exists', { email, username, ip, route: req.originalUrl });
+                return res.status(400).json({ message: 'User with this email or username already exists' });
+            }
+
+            // Create user
+            const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
+            const user = new Users({
+                username,
+                email,
+                password,
+                profileImage,
+                isActive: false,
+            });
+
+            // Generate verification token
+            await user.generateResetToken('email_verification');
+            await user.save();
+            logger.info('User registered successfully', { email, userId: user._id, ip, route: req.originalUrl });
+
+            // Send verification email with token
+            const emailSent = await sendVerificationEmail(email, null, user.emailVerifyToken);
+            if (!emailSent) {
+                logger.error('Failed to send verification email', { email, ip, route: req.originalUrl });
+                return res.status(500).json({ message: 'Failed to send verification email' });
+            }
+
+            res.status(201).json({ message: 'Verification email sent. Please check your inbox and paste the token in the app.' });
+        } catch (error) {
+            logger.error('Registration error', { error: error.message, email, ip, route: req.originalUrl });
+            res.status(500).json({ message: 'Server error during registration' });
         }
-
-        const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
-        const user = new Users({
-            username,
-            email,
-            password,
-            profileImage,
-            isActive: false,
-        });
-
-        await user.generateResetToken('email_verification');
-        await user.save();
-        logger.info('User registered successfully', { email, userId: user._id, ip, route: req.originalUrl });
-
-        const verifyUrl = `${process.env.NODE_JS_API_URL}/api/auth/verify-email?token=${user.emailVerifyToken}`;
-        const emailSent = await sendVerificationEmail(email, verifyUrl);
-        if (!emailSent) {
-            logger.error('Failed to send verification email', { email, ip, route: req.originalUrl });
-            return res.status(500).json({ message: 'Failed to send verification email' });
-        }
-
-        res.status(201).json({ message: 'Verification email sent. Please check your inbox.' });
     }),
 ];
 
-// ======================= Verify Email =======================
+// Verify Email endpoint
 export const verifyEmail = [
-    validate([query("token").notEmpty().withMessage("Verification token is required")]),
+    setSecurityHeaders,
+    validate([
+        body('token')
+            .notEmpty()
+            .withMessage('Verification token is required'),
+    ]),
     asyncHandler(async (req, res) => {
-        const { token } = req.query;
+        const { token } = req.body;
         const ip = requestIp.getClientIp(req);
 
-        const user = await Users.findOne({
-            emailVerifyToken: token,
-            emailVerifyExpires: { $gt: Date.now() },
-        });
+        try {
+            // Find user by token and check expiry
+            const user = await Users.findOne({
+                emailVerifyToken: token,
+                emailVerifyExpires: { $gt: Date.now() },
+            });
 
-        if (!user) {
-            logger.warn("Invalid or expired verification token", { ip, route: req.originalUrl });
-            return res.status(400).json({ message: "Invalid or expired verification token" });
+            if (!user) {
+                logger.warn('Invalid or expired verification token', { ip, route: req.originalUrl });
+                return res.status(400).json({ message: 'Invalid or expired verification token' });
+            }
+
+            // Update user status
+            user.emailVerifyToken = undefined;
+            user.emailVerifyExpires = undefined;
+            user.isActive = true;
+            await user.save();
+
+            logger.info('Email verified successfully', { userId: user._id, email: user.email, ip, route: req.originalUrl });
+            res.status(200).json({ message: 'Email verified successfully! You can now log in.' });
+        } catch (error) {
+            logger.error('Email verification error', { error: error.message, ip, route: req.originalUrl });
+            res.status(500).json({ message: 'Server error during email verification' });
         }
-
-        user.emailVerifyToken = undefined;
-        user.emailVerifyExpires = undefined;
-        user.isActive = true;
-        await user.save();
-        logger.info("Email verified successfully", { userId: user._id, email: user.email, ip, route: req.originalUrl });
-
-        res.status(200).json({ message: "Email verified successfully! You can now log in." });
-    })
+    }),
 ];
 
 // ======================= Login =======================
