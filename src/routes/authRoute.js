@@ -15,7 +15,7 @@ import {
     verifyDevice,
 } from "../controllers/authController.js";
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
-import { logger } from "../logger/logger.js";
+import { logger, httpLogger } from "../logger/logger.js";
 import requestIp from "request-ip";
 
 const router = Router();
@@ -80,16 +80,17 @@ const logRequest = (req, res, next) => {
         userId: req.user?.id,
         ip: requestIp.getClientIp(req),
         userAgent: req.headers["user-agent"],
+        body: req.body, // Add request body for debugging
         timestamp: new Date().toISOString(),
     });
     next();
 };
 
 // Register new user
-router.post("/register", registerLimiter, logRequest, register);
+router.post("/register", httpLogger, registerLimiter, logRequest, register);
 
 // Login
-router.post("/login", loginLimiter, logRequest, login);
+router.post("/login", httpLogger, logRequest, loginLimiter, login);
 
 // Verify device (OTP for new device)
 router.post("/verify-device", verifyDeviceLimiter, logRequest, verifyDevice);

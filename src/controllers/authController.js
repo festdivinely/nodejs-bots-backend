@@ -192,6 +192,7 @@ export const login = [
         body("totp").optional().isLength({ min: 6, max: 6 }).withMessage("TOTP must be 6 digits"),
     ]),
     asyncHandler(async (req, res) => {
+        logger.info('Login route accessed', { body: req.body, ip: requestIp.getClientIp(req) });
         const { usernameOrEmail, password, fingerprint, totp } = req.body;
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
