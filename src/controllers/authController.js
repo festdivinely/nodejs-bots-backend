@@ -874,6 +874,50 @@ export const resetPassword = [
     }),
 ];
 
+// Adding verifyResetToken endpoint
+export const verifyResetToken = [
+    setSecurityHeaders,
+    validate([query('token').notEmpty().withMessage('Reset token is required')]),
+    asyncHandler(async (req, res) => {
+        const { token } = req.query;
+        const ip = requestIp.getClientIp(req);
+        const geo = geoip.lookup(ip);
+        const country = geo ? geo.country : 'unknown';
+        const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+        logger.info('Verify reset token route accessed', {
+            query: { token: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const user = await Users.findOne({
+                passwordResetToken: token,
+                passwordResetExpires: { $gt: Date.now() },
+            });
+            if (!user) {
+                logger.warn('Invalid or expired reset token', { ip, country, deviceInfo });
+                return res.status(400).json({ message: 'Invalid or expired reset token' });
+            }
+            logger.info('Reset token verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            res.status(200).json({ message: 'Reset token is valid' });
+        } catch (error) {
+            logger.error('Verify reset token error', {
+                error: error.message,
+                stack: error.stack,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({ message: 'Server error during token verification' });
+        }
+    }),
+];
+
 export const updateProfileImage = [
     setSecurityHeaders,
     validate([body('image').notEmpty().withMessage('Image is required')]),

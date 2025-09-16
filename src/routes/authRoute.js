@@ -15,6 +15,7 @@ import {
     getProfile,
     getAdminDashboard,
     verifyDevice,
+    verifyResetToken, // Add this
 } from "../controllers/authController.js";
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
 import { logger, httpLogger } from "../logger/logger.js";
@@ -170,5 +171,6 @@ router.get('/profile', httpLogger, logRequest, protect, getProfile);
 router.get('/admin', httpLogger, logRequest, protect, requireRole(['admin']), getAdminDashboard);
 router.put('/profile/image', httpLogger, logRequest, protect, csrfProtect, updateProfileImage);
 router.put('/profile/username', httpLogger, logRequest, protect, csrfProtect, updateUsername);
+router.get('/verify-reset-token/:token', httpLogger, logRequest, resetLimiter, verifyResetToken);
 
 export default router;
