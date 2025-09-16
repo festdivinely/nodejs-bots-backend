@@ -56,6 +56,19 @@ const setSecurityHeaders = (req, res, next) => {
     next();
 };
 
+const validateCsrfToken = (req, res, next) => {
+    const csrfToken = req.headers['x-csrf-token'];
+    if (!DEV_MODE && !csrfToken) {
+        logger.warn('CSRF token missing', {
+            route: req.originalUrl,
+            ip: requestIp.getClientIp(req),
+            timestamp: new Date().toISOString(),
+        });
+        return res.status(403).json({ message: 'CSRF token required' });
+    }
+    next();
+};
+
 const usernameValidation = [
     body('username')
         .trim()
@@ -91,6 +104,7 @@ const validate = (validations) => [
                 errors: errors.array(),
                 route: req.originalUrl,
                 ip: requestIp.getClientIp(req),
+                timestamp: new Date().toISOString(),
             });
             return res.status(400).json({ message: 'Validation failed', errors: errors.array() });
         }
@@ -219,7 +233,7 @@ export const login = [
     validate([
         body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
         body('password').optional().custom((value, { req }) => {
-            if (!value && !req.body.isResendOtp) return false; // Allow empty password for OTP resend
+            if (!value && !req.body.isResendOtp) return false;
             return true;
         }).withMessage('Password is required unless resending OTP'),
         body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
@@ -227,7 +241,7 @@ export const login = [
     ]),
     asyncHandler(async (req, res) => {
         const { usernameOrEmail, password, fingerprint, totp } = req.body;
-        const isResendOtp = !password; // Detect OTP resend request
+        const isResendOtp = !password;
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
         const country = geo ? geo.country : 'unknown';
@@ -365,7 +379,6 @@ export const verifyDevice = [
         });
 
         try {
-            // Case-insensitive query for usernameOrEmail
             const user = await Users.findOne({
                 $or: [
                     { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
@@ -383,7 +396,7 @@ export const verifyDevice = [
                     country,
                     deviceInfo,
                     timestamp: new Date().toISOString(),
-                    usersFound: await Users.find({ // Debug: Check if user exists
+                    usersFound: await Users.find({
                         $or: [
                             { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
                             { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
@@ -438,19 +451,21 @@ export const verifyDevice = [
 
 export const refreshToken = [
     setSecurityHeaders,
+    validateCsrfToken,
     validate([
         body('refreshToken').notEmpty().withMessage('Refresh token is required'),
         body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
     ]),
     asyncHandler(async (req, res) => {
         const { refreshToken, fingerprint } = req.body;
+        const csrfToken = req.headers['x-csrf-token'];
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
         logger.info('Refresh token route accessed', {
-            body: { fingerprint, refreshToken: '[REDACTED]' },
+            body: { fingerprint, refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
             ip,
             country,
             deviceInfo,
@@ -460,7 +475,7 @@ export const refreshToken = [
         try {
             if (await isBlacklisted(refreshToken)) {
                 logger.warn('Blacklisted refresh token', { ip, country, deviceInfo });
-                return res.status(401).json({ message: 'Invalid token' });
+                return res.status(401).json({ message: 'Invalid refresh token' });
             }
 
             const payload = jwt.verify(refreshToken, publicKey, {
@@ -474,10 +489,17 @@ export const refreshToken = [
                 return res.status(404).json({ message: 'User not found' });
             }
 
-            const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken);
+            const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken && s.csrfToken === csrfToken);
             if (sessionIndex === -1) {
-                logger.warn('Invalid refresh token', { userId: user._id, ip, country, deviceInfo });
-                return res.status(401).json({ message: 'Invalid token' });
+                logger.warn('Invalid refresh token or CSRF token', {
+                    userId: user._id,
+                    ip,
+                    country,
+                    deviceInfo,
+                    sessionFound: user.sessions.some(s => s.token === refreshToken),
+                    csrfMatch: user.sessions.some(s => s.csrfToken === csrfToken),
+                });
+                return res.status(401).json({ message: 'Invalid refresh token or CSRF token' });
             }
             const session = user.sessions[sessionIndex];
 
@@ -526,7 +548,7 @@ export const refreshToken = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            return res.status(500).json({ message: 'Server error during token refresh' });
+            return res.status(401).json({ message: 'Invalid refresh token' });
         }
     }),
 ];
@@ -536,13 +558,14 @@ export const logout = [
     validate([body('refreshToken').notEmpty().withMessage('Refresh token is required')]),
     asyncHandler(async (req, res) => {
         const { refreshToken } = req.body;
+        const csrfToken = req.headers['x-csrf-token'];
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
         logger.info('Logout route accessed', {
-            body: { refreshToken: '[REDACTED]' },
+            body: { refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
             ip,
             country,
             deviceInfo,
@@ -552,12 +575,28 @@ export const logout = [
         try {
             const payload = jwt.verify(refreshToken, publicKey, { algorithms: ['RS256'] });
             const user = await Users.findById(payload.userId);
-            if (user) {
-                user.sessions = user.sessions.filter((s) => s.token !== refreshToken);
-                await blacklistToken(refreshToken);
-                await user.save();
-                logger.info('User logged out successfully', { userId: user._id, ip, country, deviceInfo });
+            if (!user) {
+                logger.warn('User not found for logout', { userId: payload.userId, ip, country, deviceInfo });
+                return res.status(401).json({ message: 'Invalid refresh token' });
             }
+
+            const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken && (!csrfToken || s.csrfToken === csrfToken));
+            if (sessionIndex === -1) {
+                logger.warn('Invalid refresh token or CSRF token', {
+                    userId: user._id,
+                    ip,
+                    country,
+                    deviceInfo,
+                    sessionFound: user.sessions.some(s => s.token === refreshToken),
+                    csrfMatch: csrfToken ? user.sessions.some(s => s.csrfToken === csrfToken) : true,
+                });
+                return res.status(401).json({ message: 'Invalid refresh token or CSRF token' });
+            }
+
+            user.sessions = user.sessions.filter((s) => s.token !== refreshToken);
+            await blacklistToken(refreshToken);
+            await user.save();
+            logger.info('User logged out successfully', { userId: user._id, ip, country, deviceInfo });
             res.json({ message: 'Logged out successfully' });
         } catch (error) {
             logger.error('Logout error', {
@@ -568,7 +607,7 @@ export const logout = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            return res.status(500).json({ message: 'Server error during logout' });
+            return res.status(401).json({ message: 'Invalid refresh token' });
         }
     }),
 ];
