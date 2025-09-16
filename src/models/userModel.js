@@ -169,6 +169,7 @@ UserSchema.methods.generateRefreshToken = async function (fingerprint, ip, count
             createdAt: new Date(),
         };
         this.sessions.push(session);
+        await this.save();
         logger.info("Refresh token generated", { userId: this._id.toString(), email: this.email, jti, fingerprint });
         return token;
     } catch (error) {
@@ -186,6 +187,7 @@ UserSchema.methods.generateEmailVerifyToken = async function () {
         }
         this.emailVerifyToken = token;
         this.emailVerifyExpires = new Date(Date.now() + ms("15m"));
+        await this.save();
         logger.info("Email verification token generated", { userId: this._id.toString(), email: this.email });
         return token;
     } catch (error) {
@@ -203,6 +205,7 @@ UserSchema.methods.generatePasswordResetToken = async function () {
         );
         this.passwordResetToken = token;
         this.passwordResetExpires = new Date(Date.now() + ms("15m"));
+        await this.save();
         logger.info("Password reset token generated", { userId: this._id.toString(), email: this.email });
         return token;
     } catch (error) {
@@ -225,18 +228,41 @@ UserSchema.methods.verifyPassword = async function (candidatePassword) {
 };
 
 UserSchema.methods.cleanSessions = async function () {
-    this.sessions = this.sessions.filter(s => s.expires > new Date() && !s.used);
-    await this.save();
+    try {
+        this.sessions = this.sessions.filter(s => s.expires > new Date() && !s.used);
+        await this.save();
+        logger.info("Sessions cleaned", { userId: this._id.toString(), email: this.email });
+    } catch (error) {
+        logger.error("Failed to clean sessions", { userId: this._id.toString(), email: this.email, error: error.message });
+        throw error;
+    }
 };
 
 UserSchema.methods.generateDeviceVerifyToken = async function (fingerprint) {
-    const otp = crypto.randomBytes(3).toString("hex").toUpperCase();
-    const hashedOtp = await bcrypt.hash(otp, 10);
-    this.deviceVerifyToken = hashedOtp;
-    this.deviceVerifyExpires = new Date(Date.now() + ms("5m"));
-    this.deviceVerifyFingerprint = fingerprint;
-    logger.info("Device verify token generated", { userId: this._id.toString(), email: this.email, fingerprint });
-    return otp;
+    try {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit numeric OTP
+        const hashedOtp = await bcrypt.hash(otp, 10);
+        this.deviceVerifyToken = hashedOtp;
+        this.deviceVerifyFingerprint = fingerprint;
+        this.deviceVerifyExpires = new Date(Date.now() + ms("15m")); // Extended to 15 minutes
+        await this.save(); // Ensure fields are persisted
+        logger.info("Device verification token generated", {
+            userId: this._id.toString(),
+            email: this.email,
+            fingerprint,
+            expires: this.deviceVerifyExpires,
+            otp: "[REDACTED]",
+        });
+        return otp;
+    } catch (error) {
+        logger.error("Failed to generate device verification token", {
+            userId: this._id.toString(),
+            email: this.email,
+            fingerprint,
+            error: error.message,
+        });
+        throw error;
+    }
 };
 
 export default mongoose.model("User", UserSchema);

@@ -218,19 +218,23 @@ export const login = [
     setSecurityHeaders,
     validate([
         body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
-        body('password').notEmpty().withMessage('Password is required'),
+        body('password').optional().custom((value, { req }) => {
+            if (!value && !req.body.isResendOtp) return false; // Allow empty password for OTP resend
+            return true;
+        }).withMessage('Password is required unless resending OTP'),
         body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
         body('totp').optional().isLength({ min: 6, max: 6 }).withMessage('TOTP must be 6 digits'),
     ]),
     asyncHandler(async (req, res) => {
         const { usernameOrEmail, password, fingerprint, totp } = req.body;
+        const isResendOtp = !password; // Detect OTP resend request
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
         logger.info('Login route accessed', {
-            body: { usernameOrEmail, fingerprint, totp: totp ? '[REDACTED]' : undefined, password: '[REDACTED]' },
+            body: { usernameOrEmail, fingerprint, totp: totp ? '[REDACTED]' : undefined, password: password ? '[REDACTED]' : undefined },
             ip,
             country,
             deviceInfo,
@@ -239,12 +243,20 @@ export const login = [
 
         try {
             const user = await Users.findOne({
-                $or: [{ email: usernameOrEmail }, { username: usernameOrEmail }],
+                $or: [
+                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                ],
             });
 
-            if (!user || !user.isActive || !(await user.verifyPassword(password))) {
+            if (!user || !user.isActive) {
                 logger.warn('Invalid login attempt', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid credentials or inactive account' });
+            }
+
+            if (!isResendOtp && !(await user.verifyPassword(password))) {
+                logger.warn('Invalid password', { usernameOrEmail, ip, country, deviceInfo });
+                return res.status(400).json({ message: 'Invalid credentials' });
             }
 
             if (user.twoFactorEnabled && !DEV_MODE) {
@@ -266,15 +278,36 @@ export const login = [
             const existingFingerprints = user.sessions.map(s => s.fingerprint);
             const isNewDevice = fingerprint && !existingFingerprints.includes(fingerprint) && !DEV_MODE;
 
-            if (isNewDevice) {
-                const otp = await user.generateDeviceVerifyToken(fingerprint);
-                const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
-                if (!emailSent) {
-                    logger.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
-                    return res.status(500).json({ message: 'Failed to send verification email' });
+            if (isNewDevice || isResendOtp) {
+                try {
+                    const otp = await user.generateDeviceVerifyToken(fingerprint);
+                    const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
+                    if (!emailSent) {
+                        logger.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
+                        return res.status(500).json({ message: 'Failed to send verification email' });
+                    }
+                    await user.save();
+                    logger.info('New device detected or OTP resent; OTP sent', {
+                        userId: user._id,
+                        fingerprint,
+                        ip,
+                        country,
+                        deviceInfo,
+                        deviceVerifyFingerprint: user.deviceVerifyFingerprint,
+                        deviceVerifyExpires: user.deviceVerifyExpires,
+                    });
+                    return res.status(200).json({ message: 'New device detected. Verify with OTP sent to your email.', requiresOtp: true });
+                } catch (error) {
+                    logger.error('Error during device verification setup', {
+                        error: error.message,
+                        stack: error.stack,
+                        userId: user._id,
+                        ip,
+                        country,
+                        deviceInfo,
+                    });
+                    return res.status(500).json({ message: 'Failed to set up device verification' });
                 }
-                logger.info('New device detected; OTP sent', { userId: user._id, fingerprint, ip, country, deviceInfo });
-                return res.status(200).json({ message: 'New device detected. Verify with OTP sent to your email.', requiresOtp: true });
             }
 
             user.lastLogin = new Date();
