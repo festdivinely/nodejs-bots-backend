@@ -364,8 +364,8 @@ export const resendVerifyDevice = [
 export const login = [
     setSecurityHeaders,
     validate([
-        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
-        body('password').optional().notEmpty().withMessage('Password is required'),
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required please'),
+        body('password').optional().notEmpty().withMessage('Password is required please'),
         body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
         body('totp').optional().isLength({ min: 6, max: 6 }).withMessage('TOTP must be 6 digits'),
     ]),
