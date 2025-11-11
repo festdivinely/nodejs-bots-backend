@@ -9,20 +9,13 @@ export default async function handler(req, res) {
         try {
             await connectDb();
             isDbConnected = true;
-            console.info("MongoDB connected at cold start");
         } catch (error) {
-            console.error("MongoDB failed:", error.message);
-            return res.status(500).json({ error: "Service unavailable" });
+            return res.status(500).json({ error: "DB failed" });
         }
     }
 
-    // Fix Vercel path stripping
-    const path = req.url.split("?")[0];
-    if (path === "/" || path === "") {
-        req.url = "/";
-    } else if (!path.startsWith("/api/")) {
-        req.url = "/api" + path;
-    }
+    // THIS IS THE ONLY LINE THAT MATTERS
+    req.url = req.url.replace(/^\/(auth|bots|register|login|logout|profile)/, "/api/$1");
 
     app(req, res);
 }
