@@ -2,7 +2,6 @@
 import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken";
 import Users from "../models/userModel.js";
-import { logger } from "../logger/logger.js";
 
 const publicKey = process.env.PUBLIC_KEY;
 if (!publicKey) {
