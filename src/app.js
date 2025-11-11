@@ -5,24 +5,15 @@ import rateLimit from "express-rate-limit";
 import authRoute from "./routes/authRoute.js";
 import botRoute from "./routes/botRoutes.js";
 import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
-import connectDb from "./config/mongodb.config.js";   // IMPORTANT FOR SERVERLESS
+// REMOVED: connectDb import — NO LONGER NEEDED HERE
 
 const app = express();
 
 console.info("Initializing Express server");
 
-// Ensure MongoDB is connected before every request (cached connection)
-app.use(async (req, res, next) => {
-    try {
-        await connectDb();   // cached, fast, safe for Vercel
-        next();
-    } catch (err) {
-        console.error("DB connection error in middleware", { error: err.message });
-        next(err);
-    }
-});
+// DELETED: connectDb middleware — MOVED TO api/index.js
 
-// Helmet configuration (unchanged)
+// Helmet configuration
 const helmetConfig = {
     contentSecurityPolicy: {
         directives: {
@@ -36,16 +27,13 @@ const helmetConfig = {
 
 if (process.env.NODE_ENV === "development") {
     app.use(helmet({ ...helmetConfig, hsts: false }));
-    console.info(" helmet configured without HSTS (development mode)");
+    console.info("Helmet configured without HSTS (development mode)");
 } else {
     app.use(helmet(helmetConfig));
     console.info("Helmet security middleware configured (production mode)");
 }
 
-// Logging middleware - REMOVED httpLogger
-// app.use(httpLogger);  ← DELETED
-
-// Rate limiting for /api/auth
+// Rate limiting
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
@@ -54,7 +42,7 @@ const globalLimiter = rateLimit({
 app.use("/api/auth", globalLimiter);
 console.info("Rate limiting middleware configured");
 
-// CORS configuration (unchanged)
+// CORS
 const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(",")
     : ["https://quantumrobots.com", "http://127.0.0.1:3000"];
@@ -72,30 +60,41 @@ console.info("CORS middleware configured", { origins: corsOrigins });
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// API root
+app.get("/api/", (req, res) => {
+    res.json({
+        message: "Trade Divinely Bot API is LIVE",
+        routes: ["/api/auth", "/api/bots"],
+        time: new Date().toISOString()
+    });
+});
+
 // Routes
 app.use("/api/auth", authRoute);
 app.use("/api/bots", botRoute);
 
-// Root test endpoint
+// Root
 app.get("/", (req, res) => {
     res.send(`
     <html>
-      <head><title>Quantum Robots API</title></head>
-      <body style="font-family: Arial, sans-serif; text-align: center; padding: 2rem;">
-        <h1>Quantum Robots API</h1>
-        <p>Serverless function executed successfully.</p>
-        <small>${new Date().toISOString()}</small>
+      <head><title>Trade Divinely Bot API</title></head>
+      <body style="font-family: Arial, sans-serif; text-align: center; padding: 2rem; background:#000; color:#00ff41;">
+        <h1>TRADE DIVINELY BOT API</h1>
+        <p>Serverless backend is <strong>ALIVE</strong>.</p>
+        <p><strong>${new Date().toISOString()}</strong></p>
+        <hr>
+        <p>API: <code>/api/auth/register</code></p>
       </body>
     </html>
   `);
 });
 
-// Not found handler
+// 404
 app.use((req, res, next) => {
     next(new NotFoundError(`Route ${req.originalUrl} not found`));
 });
 
-// Global error middleware
+// Error handler
 app.use(errorHandler);
 
-export default app;   // IMPORTANT FOR VERCEL (NO LISTEN)
+export default app;
