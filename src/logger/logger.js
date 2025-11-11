@@ -65,7 +65,7 @@ if (!isProduction) {
     cron.schedule(
         "0 0 * * *",
         async () => {
-            logger.info("🕛 Cron tick (dev) — sending logs if any");
+            logger.info("🕛 testing Cron tick (dev) — sending logs if any");
             // In dev, you could read logs from src/logs if you want
             // But on serverless, skip this
         },

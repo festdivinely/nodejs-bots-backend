@@ -75,7 +75,7 @@ const job = new cron.CronJob("*/14 * * * *", async function () {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error("Session cleanup failed", {
+    logger.error("Session cleanup failed fatal", {
       error: error.message,
       timestamp: new Date().toISOString(),
     });
