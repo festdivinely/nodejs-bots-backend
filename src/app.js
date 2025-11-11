@@ -6,12 +6,24 @@ import authRoute from "./routes/authRoute.js";
 import botRoute from "./routes/botRoutes.js";
 import { logger, httpLogger } from "./logger/logger.js";
 import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
+import connectDb from "./config/mongodb.config.js";   // ✅ IMPORTANT FOR SERVERLESS
 
 const app = express();
 
 logger.info("Initializing Express server");
 
-// Helmet configuration (different for dev vs prod)
+// ✅ Ensure MongoDB is connected before every request (cached connection)
+app.use(async (req, res, next) => {
+    try {
+        await connectDb();   // cached, fast, safe for Vercel
+        next();
+    } catch (err) {
+        logger.error("DB connection error in middleware", { error: err.message });
+        next(err);
+    }
+});
+
+// ✅ Helmet configuration (unchanged)
 const helmetConfig = {
     contentSecurityPolicy: {
         directives: {
@@ -31,10 +43,10 @@ if (process.env.NODE_ENV === "development") {
     logger.info("Helmet security middleware configured (production mode)");
 }
 
-// HTTP request logging
+// ✅ Logging middleware
 app.use(httpLogger);
 
-// Rate limiting (apply only to /api/auth)
+// ✅ Rate limiting for /api/auth
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
@@ -43,7 +55,7 @@ const globalLimiter = rateLimit({
 app.use("/api/auth", globalLimiter);
 logger.info("Rate limiting middleware configured");
 
-// CORS configuration
+// ✅ CORS configuration (unchanged)
 const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(",")
     : ["https://quantumrobots.com", "http://127.0.0.1:3000"];
@@ -61,30 +73,31 @@ logger.info("CORS middleware configured", { origins: corsOrigins });
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
+// ✅ Routes
 app.use("/api/auth", authRoute);
 app.use("/api/bots", botRoute);
 
-// Root route
+// ✅ Root test endpoint
 app.get("/", (req, res) => {
     res.send(`
     <html>
       <head><title>Quantum Robots API</title></head>
       <body style="font-family: Arial, sans-serif; text-align: center; padding: 2rem;">
         <h1>🚀 Quantum Robots API</h1>
-        <p>Server is running on port ${process.env.PORT || 3000}</p>
+        <p>Serverless function executed successfully.</p>
         <small>${new Date().toISOString()}</small>
       </body>
     </html>
   `);
 });
 
-// Not found handler
+// ✅ Not found handler
 app.use((req, res, next) => {
     next(new NotFoundError(`Route ${req.originalUrl} not found`));
 });
 
-// Global error handler
+// ✅ Global error middleware
 app.use(errorHandler);
 
-export default app;
+export default app;   // ✅ IMPORTANT FOR VERCEL (NO LISTEN)
+

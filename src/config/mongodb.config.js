@@ -1,13 +1,17 @@
+// src/config/mongodb.config.js
 import mongoose from "mongoose";
-import { logger } from "../logger/logger.js"; // Import Pino logger
+
+let cachedConnection = null;
 
 const connectDb = async () => {
+    if (cachedConnection) return cachedConnection;
+
     try {
-        const conn = await mongoose.connect(process.env.MONGO_URI);
-        logger.info("MongoDB connection established", { host: conn.connection.host, timestamp: new Date().toISOString() });
-    } catch (error) {
-        logger.error("Failed to connect to MongoDB", { error: error.message, timestamp: new Date().toISOString() });
-        process.exit(1);
+        cachedConnection = await mongoose.connect(process.env.MONGO_URI);
+        return cachedConnection;
+    } catch (err) {
+        console.error("MongoDB connection failed", err);
+        throw err;
     }
 };
 
