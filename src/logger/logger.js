@@ -12,11 +12,13 @@ const isProduction = process.env.NODE_ENV === "production";
 const fastApiUrl = process.env.FASTAPI_URL || "http://127.0.0.1:8000";
 const recipientEmail = process.env.LOG_RECIPIENT_EMAIL || "festusdivinely@gmail.com";
 
-// --- Logger setup ---
+// ----------------------------
+// ✅ LOGGER SETUP
+// ----------------------------
 const logger = pino({
     level: process.env.LOG_LEVEL || (isProduction ? "info" : "debug"),
     transport: isProduction
-        ? undefined // serverless: logs go to console
+        ? undefined // ✅ Production (Vercel) -> console only
         : {
             target: "pino-pretty",
             options: {
@@ -39,14 +41,19 @@ const logger = pino({
     },
 });
 
-// --- HTTP logger middleware ---
+// ----------------------------
+// ✅ HTTP LOGGER MIDDLEWARE
+// ----------------------------
 const httpLogger = pinoHttp({
     logger,
     genReqId: (req) => req.headers["x-request-id"] || crypto.randomUUID(),
     autoLogging: !isProduction,
 });
 
-// --- Optional: send logs (local dev only) ---
+// ----------------------------
+// ✅ DEV-ONLY: SEND LOGS / CRON
+// (Disabled in production to avoid blocking Vercel)
+// ----------------------------
 if (!isProduction) {
     const sendLogs = async (logContent, fileName) => {
         try {
@@ -57,21 +64,24 @@ if (!isProduction) {
             });
             logger.info(`✅ Sent log file ${fileName} to FastAPI`);
         } catch (err) {
-            logger.error({ err: err.message, stack: err.stack }, "❌ Failed to send log file");
+            logger.error(
+                { err: err.message, stack: err.stack },
+                "❌ Failed to send log file"
+            );
         }
     };
 
-    // Example cron: run every day at midnight Lagos time
+    // ✅ Dev-only cron (never runs on Vercel)
     cron.schedule(
         "0 0 * * *",
         async () => {
-            logger.info("🕛 testing Cron tick (dev) — sending logs if any");
-            // In dev, you could read logs from src/logs if you want
-            // But on serverless, skip this
+            logger.info("🕛 Cron tick (local dev only)");
         },
         { timezone: "Africa/Lagos" }
     );
 }
 
+// ✅ Export logger + middleware
 export { logger, httpLogger };
+
 
