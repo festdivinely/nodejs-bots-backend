@@ -6,7 +6,6 @@ import User from "../models/userModel.js";
 import { BotStatus } from "../models/userBotsModel.js";
 import axios from "axios";
 import cloudinary from "../config/cloudinarydb.js";
-import { logger } from "../logger/logger.js"; // Import Pino logger
 
 // @desc    Create a new bot template
 // @route   POST /api/templates
@@ -16,13 +15,13 @@ export const createBotTemplate = asyncHandler(async (req, res) => {
 
     // Validation
     if (!name || !market || !description || !platform) {
-        logger.warn("Missing required fields for bot template creation", { userId: req.user.id, route: req.originalUrl });
+        console.warn("Missing required fields for bot template creation", { userId: req.user.id, route: req.originalUrl });
         res.status(400);
         throw new Error("Name, market, description, and platform are required");
     }
 
     if (botData && typeof botData !== "object") {
-        logger.warn("Invalid botData format", { userId: req.user.id, route: req.originalUrl });
+        console.warn("Invalid botData format", { userId: req.user.id, route: req.originalUrl });
         res.status(400);
         throw new Error("botData must be an object");
     }
@@ -42,7 +41,7 @@ export const createBotTemplate = asyncHandler(async (req, res) => {
     });
 
     const createdTemplate = await template.save();
-    logger.info("Bot template created successfully", { userId: req.user.id, templateId: createdTemplate._id, route: req.originalUrl });
+    console.info("Bot template created successfully", { userId: req.user.id, templateId: createdTemplate._id, route: req.originalUrl });
 
     res.status(201).json(createdTemplate);
 });
@@ -57,19 +56,19 @@ export const updateBotTemplate = asyncHandler(async (req, res) => {
     const template = await BotTemplate.findById(id);
 
     if (!template) {
-        logger.warn("Bot template not found", { userId: req.user.id, templateId: id, route: req.originalUrl });
+        console.warn("Bot template not found", { userId: req.user.id, templateId: id, route: req.originalUrl });
         res.status(404);
         throw new Error("Bot template not found");
     }
 
     if (template.createdBy.toString() !== req.user.id) {
-        logger.warn("Unauthorized attempt to update bot template", { userId: req.user.id, templateId: id, route: req.originalUrl });
+        console.warn("Unauthorized attempt to update bot template", { userId: req.user.id, templateId: id, route: req.originalUrl });
         res.status(403);
         throw new Error("Not authorized to update this template");
     }
 
     if (botData && typeof botData !== "object") {
-        logger.warn("Invalid botData format for update", { userId: req.user.id, templateId: id, route: req.originalUrl });
+        console.warn("Invalid botData format for update", { userId: req.user.id, templateId: id, route: req.originalUrl });
         res.status(400);
         throw new Error("botData must be an object");
     }
@@ -86,7 +85,7 @@ export const updateBotTemplate = asyncHandler(async (req, res) => {
     if (botData) template.botData = botData;
 
     const updatedTemplate = await template.save();
-    logger.info("Bot template updated successfully", { userId: req.user.id, templateId: id, route: req.originalUrl });
+    console.info("Bot template updated successfully", { userId: req.user.id, templateId: id, route: req.originalUrl });
 
     res.json(updatedTemplate);
 });
@@ -110,7 +109,7 @@ export const getAllBots = asyncHandler(async (req, res) => {
         });
 
     if (!bots || bots.length === 0) {
-        logger.warn("No bots found", { route: req.originalUrl });
+        console.warn("No bots found", { route: req.originalUrl });
         res.status(404);
         throw new Error("No bots found");
     }
@@ -146,7 +145,7 @@ export const getAllBots = asyncHandler(async (req, res) => {
         createdAt: bot.createdAt,
     }));
 
-    logger.info("Fetched all bots", { totalBots: botResponse.length, page, limit, route: req.originalUrl });
+    console.info("Fetched all bots", { totalBots: botResponse.length, page, limit, route: req.originalUrl });
     res.status(200).json({
         bots: botResponse,
         totalBots,
@@ -179,7 +178,7 @@ export const getUserBots = asyncHandler(async (req, res) => {
         });
 
     if (!userRobots || userRobots.length === 0) {
-        logger.warn("No bots found for user", { userId, route: req.originalUrl });
+        console.warn("No bots found for user", { userId, route: req.originalUrl });
         res.status(404);
         throw new Error("No bots found for this user");
     }
@@ -219,7 +218,7 @@ export const getUserBots = asyncHandler(async (req, res) => {
         createdAt: robot.createdAt,
     }));
 
-    logger.info("Fetched user bots", { userId, totalBots: robotResponse.length, page, limit, route: req.originalUrl });
+    console.info("Fetched user bots", { userId, totalBots: robotResponse.length, page, limit, route: req.originalUrl });
     res.status(200).json({
         bots: robotResponse,
         totalBots: totalRobots,
@@ -236,18 +235,18 @@ export const hasApiKey = asyncHandler(async (req, res) => {
     const userId = req.user.id;
 
     if (!botId || !mongoose.isValidObjectId(botId)) {
-        logger.warn("Invalid or missing botId for API key check", { userId, botId, route: req.originalUrl });
+        console.warn("Invalid or missing botId for API key check", { userId, botId, route: req.originalUrl });
         return res.status(400).json({ message: "Invalid or missing botId" });
     }
 
     const userRobot = await UserRobot.findOne({ _id: botId, userId })
         .populate("template.refId", "platform");
     if (!userRobot) {
-        logger.warn("Bot not found or not owned by user", { userId, botId, route: req.originalUrl });
+        console.warn("Bot not found or not owned by user", { userId, botId, route: req.originalUrl });
         return res.status(404).json({ message: "Bot not found or not owned by user" });
     }
 
-    logger.info("Checked API key status for bot", { userId, botId, route: req.originalUrl });
+    console.info("Checked API key status for bot", { userId, botId, route: req.originalUrl });
     return res.status(200).json({
         hasApiKey: userRobot.apiKeys && userRobot.apiKeys.length > 0,
         apiKeyCount: userRobot.apiKeys ? userRobot.apiKeys.length : 0,
@@ -268,47 +267,47 @@ export const acquireBot = asyncHandler(async (req, res) => {
 
         // Validate inputs
         if (!templateId || !mongoose.isValidObjectId(templateId)) {
-            logger.warn("Invalid or missing templateId for bot acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("Invalid or missing templateId for bot acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing templateId" });
         }
         if (!config || typeof config !== "object" || config === null) {
-            logger.warn("Invalid or missing config for bot acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("Invalid or missing config for bot acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing config" });
         }
         if ("risk_level" in config && (typeof config.risk_level !== "number" || config.risk_level < 0 || config.risk_level > 100)) {
-            logger.warn("Invalid risk_level for bot acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("Invalid risk_level for bot acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "risk_level must be a number between 0 and 100" });
         }
         if (!config.accountState || !Object.values(AccountState).includes(config.accountState)) {
-            logger.warn("Invalid accountState for bot acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("Invalid accountState for bot acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "accountState must be 'demo' or 'real'" });
         }
         if (startMode && !["momentarily", "perpetually", "none"].includes(startMode)) {
-            logger.warn("Invalid startMode for bot acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("Invalid startMode for bot acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid startMode" });
         }
 
         const template = await BotTemplate.findById(templateId).session(session);
         if (!template) {
-            logger.warn("Bot template not found for acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("Bot template not found for acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "Bot template not found" });
         }
 
         const user = await User.findById(userId).session(session);
         if (!user) {
-            logger.warn("User not found for bot acquisition", { userId, templateId, route: req.originalUrl });
+            console.warn("User not found for bot acquisition", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "User not found" });
         }
 
         if (!template.isFree && !transactionId) {
-            logger.warn("Transaction ID required for paid bot", { userId, templateId, route: req.originalUrl });
+            console.warn("Transaction ID required for paid bot", { userId, templateId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Transaction ID required for paid bot" });
         }
@@ -316,13 +315,13 @@ export const acquireBot = asyncHandler(async (req, res) => {
         // Validate apiKeys for acquire & start
         if (startMode && startMode !== "none") {
             if (!config.apiKeys || !Array.isArray(config.apiKeys) || config.apiKeys.length === 0 || config.apiKeys.some((key) => key.platform !== template.platform)) {
-                logger.warn("Invalid API keys for bot start", { userId, templateId, route: req.originalUrl });
+                console.warn("Invalid API keys for bot start", { userId, templateId, route: req.originalUrl });
                 await session.abortTransaction();
                 return res.status(400).json({ message: `At least one API key for the platform '${template.platform}' is required for acquire & start` });
             }
         } else if (config.apiKeys && config.apiKeys.length > 0) {
             if (config.apiKeys.some((key) => key.platform !== template.platform)) {
-                logger.warn("API keys platform mismatch", { userId, templateId, route: req.originalUrl });
+                console.warn("API keys platform mismatch", { userId, templateId, route: req.originalUrl });
                 await session.abortTransaction();
                 return res.status(400).json({ message: `All API keys must be for the platform '${template.platform}'` });
             }
@@ -395,7 +394,7 @@ export const acquireBot = asyncHandler(async (req, res) => {
                 );
 
                 if (pythonServerResponse.status !== 200) {
-                    logger.error("Failed to process bot on Python server", {
+                    console.error("Failed to process bot on Python server", {
                         userId,
                         botId: userRobot._id,
                         templateId,
@@ -408,7 +407,7 @@ export const acquireBot = asyncHandler(async (req, res) => {
                     });
                 }
             } catch (error) {
-                logger.error("Failed to communicate with Python server for bot acquisition", {
+                console.error("Failed to communicate with Python server for bot acquisition", {
                     userId,
                     botId: userRobot._id,
                     templateId,
@@ -438,7 +437,7 @@ export const acquireBot = asyncHandler(async (req, res) => {
         );
 
         await session.commitTransaction();
-        logger.info("Bot acquired successfully", { userId, botId: userRobot._id, templateId, route: req.originalUrl });
+        console.info("Bot acquired successfully", { userId, botId: userRobot._id, templateId, route: req.originalUrl });
 
         return res.status(201).json({
             message: "Bot acquired successfully",
@@ -455,7 +454,7 @@ export const acquireBot = asyncHandler(async (req, res) => {
             },
         });
     } catch (error) {
-        logger.error("Failed to acquire bot", { userId: req.user.id, templateId: req.body.templateId, route: req.originalUrl, error: error.message });
+        console.error("Failed to acquire bot", { userId: req.user.id, templateId: req.body.templateId, route: req.originalUrl, error: error.message });
         await session.abortTransaction();
         return res.status(500).json({
             message: "Failed to acquire bot",
@@ -480,27 +479,27 @@ export const updateUserBot = asyncHandler(async (req, res) => {
 
         // Validate inputs
         if (!botId || !mongoose.isValidObjectId(botId)) {
-            logger.warn("Invalid or missing botId for bot update", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing botId for bot update", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing botId" });
         }
         if (!config || typeof config !== "object" || config === null) {
-            logger.warn("Invalid or missing config for bot update", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing config for bot update", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing config" });
         }
         if ("risk_level" in config && (typeof config.risk_level !== "number" || config.risk_level < 0 || config.risk_level > 100)) {
-            logger.warn("Invalid risk_level for bot update", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid risk_level for bot update", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "risk_level must be a number between 0 and 100" });
         }
         if ("accountState" in config && !Object.values(AccountState).includes(config.accountState)) {
-            logger.warn("Invalid accountState for bot update", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid accountState for bot update", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "accountState must be 'demo' or 'real'" });
         }
         if (startMode && !["momentarily", "perpetually", "none"].includes(startMode)) {
-            logger.warn("Invalid startMode for bot update", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid startMode for bot update", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid startMode" });
         }
@@ -509,7 +508,7 @@ export const updateUserBot = asyncHandler(async (req, res) => {
             .populate("template.refId", "platform market")
             .session(session);
         if (!userRobot) {
-            logger.warn("Bot not found or not owned by user for update", { userId, botId, route: req.originalUrl });
+            console.warn("Bot not found or not owned by user for update", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "Bot not found or not owned by user" });
         }
@@ -519,7 +518,7 @@ export const updateUserBot = asyncHandler(async (req, res) => {
         // Validate apiKeys if provided
         if (config.apiKeys && config.apiKeys.length > 0) {
             if (config.apiKeys.some((key) => key.platform !== userRobot.template.refId.platform)) {
-                logger.warn("API keys platform mismatch for bot update", { userId, botId, route: req.originalUrl });
+                console.warn("API keys platform mismatch for bot update", { userId, botId, route: req.originalUrl });
                 await session.abortTransaction();
                 return res.status(400).json({ message: `All API keys must be for the platform '${userRobot.template.refId.platform}'` });
             }
@@ -528,7 +527,7 @@ export const updateUserBot = asyncHandler(async (req, res) => {
         // For update & start (non-running bot), require at least one API key if none exist
         if (startMode && startMode !== "none" && !isRunning && (!userRobot.apiKeys || userRobot.apiKeys.length === 0)) {
             if (!config.apiKeys || config.apiKeys.length === 0 || config.apiKeys.some((key) => key.platform !== userRobot.template.refId.platform)) {
-                logger.warn("Invalid API keys for bot start", { userId, botId, route: req.originalUrl });
+                console.warn("Invalid API keys for bot start", { userId, botId, route: req.originalUrl });
                 await session.abortTransaction();
                 return res.status(400).json({ message: `At least one API key for the platform '${userRobot.template.refId.platform}' is required for update & start` });
             }
@@ -536,7 +535,7 @@ export const updateUserBot = asyncHandler(async (req, res) => {
 
         // For update & restart (running bot), API keys are optional
         if (isRunning && startMode && startMode !== "none" && (!userRobot.apiKeys || userRobot.apiKeys.length === 0)) {
-            logger.error("Running bot missing API keys", { userId, botId, route: req.originalUrl });
+            console.error("Running bot missing API keys", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(500).json({ message: "Running bot must have at least one API key" });
         }
@@ -579,7 +578,7 @@ export const updateUserBot = asyncHandler(async (req, res) => {
                 );
 
                 if (pythonServerResponse.status !== 200) {
-                    logger.error("Failed to update bot on Python server", {
+                    console.error("Failed to update bot on Python server", {
                         userId,
                         botId,
                         route: req.originalUrl,
@@ -591,7 +590,7 @@ export const updateUserBot = asyncHandler(async (req, res) => {
                     });
                 }
             } catch (error) {
-                logger.error("Failed to communicate with Python server for bot update", {
+                console.error("Failed to communicate with Python server for bot update", {
                     userId,
                     botId,
                     route: req.originalUrl,
@@ -673,13 +672,13 @@ export const updateUserBot = asyncHandler(async (req, res) => {
             createdAt: populatedRobot.createdAt,
         };
 
-        logger.info("Bot updated successfully", { userId, botId, route: req.originalUrl });
+        console.info("Bot updated successfully", { userId, botId, route: req.originalUrl });
         return res.status(200).json({
             message: "Bot updated successfully",
             robot: robotResponse,
         });
     } catch (error) {
-        logger.error("Failed to update bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
+        console.error("Failed to update bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
         await session.abortTransaction();
         return res.status(500).json({
             message: "Failed to update bot",
@@ -704,12 +703,12 @@ export const startUserBot = asyncHandler(async (req, res) => {
 
         // Validate inputs
         if (!botId || !mongoose.isValidObjectId(botId)) {
-            logger.warn("Invalid or missing botId for bot start", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing botId for bot start", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing botId" });
         }
         if (!startMode || !["momentarily", "perpetually"].includes(startMode)) {
-            logger.warn("Invalid or missing startMode for bot start", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing startMode for bot start", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing startMode" });
         }
@@ -718,13 +717,13 @@ export const startUserBot = asyncHandler(async (req, res) => {
             .populate("template.refId", "platform market")
             .session(session);
         if (!userRobot) {
-            logger.warn("Bot not found or not owned by user for start", { userId, botId, route: req.originalUrl });
+            console.warn("Bot not found or not owned by user for start", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "Bot not found or not owned by user" });
         }
 
         if ([BotStatus.RUNNING_MOMENTARILY, BotStatus.RUNNING_PERPETUALLY].includes(userRobot.status)) {
-            logger.warn("Bot is already running", { userId, botId, route: req.originalUrl });
+            console.warn("Bot is already running", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Bot is already running" });
         }
@@ -732,7 +731,7 @@ export const startUserBot = asyncHandler(async (req, res) => {
         // Require at least one API key if none exist
         if (!userRobot.apiKeys || userRobot.apiKeys.length === 0) {
             if (!apiKeys || apiKeys.length === 0 || apiKeys.some((key) => key.platform !== userRobot.template.refId.platform)) {
-                logger.warn("Invalid API keys for bot start", { userId, botId, route: req.originalUrl });
+                console.warn("Invalid API keys for bot start", { userId, botId, route: req.originalUrl });
                 await session.abortTransaction();
                 return res.status(400).json({ message: `At least one API key for the platform '${userRobot.template.refId.platform}' is required to start the bot` });
             }
@@ -742,7 +741,7 @@ export const startUserBot = asyncHandler(async (req, res) => {
             }));
         } else if (apiKeys && apiKeys.length > 0) {
             if (apiKeys.some((key) => key.platform !== userRobot.template.refId.platform)) {
-                logger.warn("API keys platform mismatch for bot start", { userId, botId, route: req.originalUrl });
+                console.warn("API keys platform mismatch for bot start", { userId, botId, route: req.originalUrl });
                 await session.abortTransaction();
                 return res.status(400).json({ message: `All API keys must be for the platform '${userRobot.template.refId.platform}'` });
             }
@@ -780,7 +779,7 @@ export const startUserBot = asyncHandler(async (req, res) => {
             );
 
             if (pythonServerResponse.status !== 200) {
-                logger.error("Failed to start bot on Python server", {
+                console.error("Failed to start bot on Python server", {
                     userId,
                     botId,
                     route: req.originalUrl,
@@ -792,7 +791,7 @@ export const startUserBot = asyncHandler(async (req, res) => {
                 });
             }
         } catch (error) {
-            logger.error("Failed to communicate with Python server for bot start", {
+            console.error("Failed to communicate with Python server for bot start", {
                 userId,
                 botId,
                 route: req.originalUrl,
@@ -858,13 +857,13 @@ export const startUserBot = asyncHandler(async (req, res) => {
             createdAt: populatedRobot.createdAt,
         };
 
-        logger.info("Bot started successfully", { userId, botId, route: req.originalUrl });
+        console.info("Bot started successfully", { userId, botId, route: req.originalUrl });
         return res.status(200).json({
             message: "Bot started successfully",
             robot: robotResponse,
         });
     } catch (error) {
-        logger.error("Failed to start bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
+        console.error("Failed to start bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
         await session.abortTransaction();
         return res.status(500).json({
             message: "Failed to start bot",
@@ -888,12 +887,12 @@ export const stopUserBot = asyncHandler(async (req, res) => {
         const { stopMode } = req.body;
 
         if (!botId || !mongoose.isValidObjectId(botId)) {
-            logger.warn("Invalid or missing botId for bot stop", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing botId for bot stop", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing botId" });
         }
         if (!stopMode || !["pause", "stop"].includes(stopMode)) {
-            logger.warn("Invalid or missing stopMode for bot stop", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing stopMode for bot stop", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing stopMode" });
         }
@@ -902,13 +901,13 @@ export const stopUserBot = asyncHandler(async (req, res) => {
             .populate("template.refId", "platform market")
             .session(session);
         if (!userRobot) {
-            logger.warn("Bot not found or not owned by user for stop", { userId, botId, route: req.originalUrl });
+            console.warn("Bot not found or not owned by user for stop", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "Bot not found or not owned by user" });
         }
 
         if ([BotStatus.STOPPED, BotStatus.PAUSED].includes(userRobot.status)) {
-            logger.warn("Bot is already stopped or paused", { userId, botId, route: req.originalUrl });
+            console.warn("Bot is already stopped or paused", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Bot is already stopped or paused" });
         }
@@ -939,7 +938,7 @@ export const stopUserBot = asyncHandler(async (req, res) => {
             );
 
             if (pythonServerResponse.status !== 200) {
-                logger.error("Failed to stop bot on Python server", {
+                console.error("Failed to stop bot on Python server", {
                     userId,
                     botId,
                     route: req.originalUrl,
@@ -951,7 +950,7 @@ export const stopUserBot = asyncHandler(async (req, res) => {
                 });
             }
         } catch (error) {
-            logger.error("Failed to communicate with Python server for bot stop", {
+            console.error("Failed to communicate with Python server for bot stop", {
                 userId,
                 botId,
                 route: req.originalUrl,
@@ -1017,13 +1016,13 @@ export const stopUserBot = asyncHandler(async (req, res) => {
             createdAt: populatedRobot.createdAt,
         };
 
-        logger.info("Bot stopped successfully", { userId, botId, stopMode, route: req.originalUrl });
+        console.info("Bot stopped successfully", { userId, botId, stopMode, route: req.originalUrl });
         return res.status(200).json({
             message: "Bot stopped successfully",
             robot: robotResponse,
         });
     } catch (error) {
-        logger.error("Failed to stop bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
+        console.error("Failed to stop bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
         await session.abortTransaction();
         return res.status(500).json({
             message: "Failed to stop bot",
@@ -1046,14 +1045,14 @@ export const deleteUserBot = asyncHandler(async (req, res) => {
         const { botId } = req.params;
 
         if (!botId || !mongoose.isValidObjectId(botId)) {
-            logger.warn("Invalid or missing botId for bot deletion", { userId, botId, route: req.originalUrl });
+            console.warn("Invalid or missing botId for bot deletion", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing botId" });
         }
 
         const userRobot = await UserRobot.findOne({ _id: botId, userId }).session(session);
         if (!userRobot) {
-            logger.warn("Bot not found or not owned by user for deletion", { userId, botId, route: req.originalUrl });
+            console.warn("Bot not found or not owned by user for deletion", { userId, botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "Bot not found or not owned by user" });
         }
@@ -1075,7 +1074,7 @@ export const deleteUserBot = asyncHandler(async (req, res) => {
             );
 
             if (pythonServerResponse.status !== 200) {
-                logger.error("Failed to delete bot on Python server", {
+                console.error("Failed to delete bot on Python server", {
                     userId,
                     botId,
                     route: req.originalUrl,
@@ -1087,7 +1086,7 @@ export const deleteUserBot = asyncHandler(async (req, res) => {
                 });
             }
         } catch (error) {
-            logger.error("Failed to communicate with Python server for bot deletion", {
+            console.error("Failed to communicate with Python server for bot deletion", {
                 userId,
                 botId,
                 route: req.originalUrl,
@@ -1112,13 +1111,13 @@ export const deleteUserBot = asyncHandler(async (req, res) => {
         );
 
         await session.commitTransaction();
-        logger.info("Bot deleted successfully", { userId, botId, route: req.originalUrl });
+        console.info("Bot deleted successfully", { userId, botId, route: req.originalUrl });
 
         return res.status(200).json({
             message: "Bot deleted successfully",
         });
     } catch (error) {
-        logger.error("Failed to delete bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
+        console.error("Failed to delete bot", { userId: req.user.id, botId: req.params.botId, route: req.originalUrl, error: error.message });
         await session.abortTransaction();
         return res.status(500).json({
             message: "Failed to delete bot",
@@ -1141,19 +1140,19 @@ export const updateBotProgress = asyncHandler(async (req, res) => {
         const { progress, notify } = req.body;
 
         if (!botId || !mongoose.isValidObjectId(botId)) {
-            logger.warn("Invalid or missing botId for progress update", { botId, route: req.originalUrl });
+            console.warn("Invalid or missing botId for progress update", { botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing botId" });
         }
         if (!progress || typeof progress !== "object" || progress === null) {
-            logger.warn("Invalid or missing progress data for bot", { botId, route: req.originalUrl });
+            console.warn("Invalid or missing progress data for bot", { botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(400).json({ message: "Invalid or missing progress data" });
         }
 
         const userRobot = await UserRobot.findById(botId).session(session);
         if (!userRobot) {
-            logger.warn("Bot not found for progress update", { botId, route: req.originalUrl });
+            console.warn("Bot not found for progress update", { botId, route: req.originalUrl });
             await session.abortTransaction();
             return res.status(404).json({ message: "Bot not found" });
         }
@@ -1172,7 +1171,7 @@ export const updateBotProgress = asyncHandler(async (req, res) => {
 
         if (notify) {
             const user = await User.findById(userRobot.userId);
-            logger.info("Notification triggered for bot progress update", {
+            console.info("Notification triggered for bot progress update", {
                 userId: userRobot.userId,
                 botId,
                 email: user.email,
@@ -1180,13 +1179,13 @@ export const updateBotProgress = asyncHandler(async (req, res) => {
             });
         }
 
-        logger.info("Bot progress updated successfully", { userId: userRobot.userId, botId, route: req.originalUrl });
+        console.info("Bot progress updated successfully", { userId: userRobot.userId, botId, route: req.originalUrl });
         return res.status(200).json({
             message: "Bot progress updated successfully",
             progress: userRobot.progress,
         });
     } catch (error) {
-        logger.error("Failed to update bot progress", { botId: req.params.botId, route: req.originalUrl, error: error.message });
+        console.error("Failed to update bot progress", { botId: req.params.botId, route: req.originalUrl, error: error.message });
         await session.abortTransaction();
         return res.status(500).json({
             message: "Failed to update bot progress",

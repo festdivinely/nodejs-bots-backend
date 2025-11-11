@@ -12,16 +12,15 @@ import {
     createBotTemplate,
     updateBotTemplate,
 } from "../controllers/botControllers.js";
-import { logger } from "../logger/logger.js"; // Import Pino logger
 
 const router = express.Router();
 
 // Log route initialization
-logger.info("Initializing bot routes", { route: "/api/bots", timestamp: new Date().toISOString() });
+console.info("Initializing bot routes", { route: "/api/bots", timestamp: new Date().toISOString() });
 
 // Create bot template (admin only)
 router.post("/", protect, requireRole(["admin"]), (req, res, next) => {
-    logger.info("Create bot template route accessed", {
+    console.info("Create bot template route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -32,7 +31,7 @@ router.post("/", protect, requireRole(["admin"]), (req, res, next) => {
 
 // Update bot template (admin only)
 router.patch("/:id", protect, requireRole(["admin"]), (req, res, next) => {
-    logger.info("Update bot template route accessed", {
+    console.info("Update bot template route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -44,7 +43,7 @@ router.patch("/:id", protect, requireRole(["admin"]), (req, res, next) => {
 
 // Get all bots (public route)
 router.get("/", (req, res, next) => {
-    logger.info("Get all bots route accessed", {
+    console.info("Get all bots route accessed", {
         method: req.method,
         path: req.originalUrl,
         timestamp: new Date().toISOString()
@@ -54,7 +53,7 @@ router.get("/", (req, res, next) => {
 
 // Get user bots (requires auth)
 router.get("/user", protect, (req, res, next) => {
-    logger.info("Get user bots route accessed", {
+    console.info("Get user bots route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -65,7 +64,7 @@ router.get("/user", protect, (req, res, next) => {
 
 // Acquire bot (requires auth)
 router.post("/acquire", protect, (req, res, next) => {
-    logger.info("Acquire bot route accessed", {
+    console.info("Acquire bot route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -76,7 +75,7 @@ router.post("/acquire", protect, (req, res, next) => {
 
 // Update user bot (requires auth)
 router.patch("/:botId", protect, (req, res, next) => {
-    logger.info("Update user bot route accessed", {
+    console.info("Update user bot route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -88,7 +87,7 @@ router.patch("/:botId", protect, (req, res, next) => {
 
 // Start user bot (requires auth)
 router.post("/:botId/start", protect, (req, res, next) => {
-    logger.info("Start user bot route accessed", {
+    console.info("Start user bot route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -100,7 +99,7 @@ router.post("/:botId/start", protect, (req, res, next) => {
 
 // Stop user bot (requires auth)
 router.post("/:botId/stop", protect, (req, res, next) => {
-    logger.info("Stop user bot route accessed", {
+    console.info("Stop user bot route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -112,7 +111,7 @@ router.post("/:botId/stop", protect, (req, res, next) => {
 
 // Delete user bot (requires auth)
 router.delete("/:botId", protect, (req, res, next) => {
-    logger.info("Delete user bot route accessed", {
+    console.info("Delete user bot route accessed", {
         method: req.method,
         path: req.originalUrl,
         userId: req.user?.id,
@@ -124,7 +123,7 @@ router.delete("/:botId", protect, (req, res, next) => {
 
 // Update bot progress (called by Python backend, no auth)
 router.post("/:botId/progress", (req, res, next) => {
-    logger.info("Update bot progress route accessed", {
+    console.info("Update bot progress route accessed", {
         method: req.method,
         path: req.originalUrl,
         botId: req.params.botId,
@@ -134,4 +133,3 @@ router.post("/:botId/progress", (req, res, next) => {
 });
 
 export default router;
-

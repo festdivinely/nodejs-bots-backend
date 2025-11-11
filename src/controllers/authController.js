@@ -10,7 +10,6 @@ import { sendVerificationEmail } from "../utility/email.js";
 import { sendPasswordResetEmail } from "../utility/passwordResetEmail.js";
 import { sendSuspiciousActivityEmail } from "../utility/suspiciousEmail.js";
 import { sendDeviceVerificationEmail } from "../utility/deviceVerifyEmail.js";
-import { logger } from "../logger/logger.js";
 import requestIp from "request-ip";
 import geoip from "geoip-lite";
 import Redis from "ioredis";
@@ -28,16 +27,16 @@ const DEV_MODE = process.env.DEV_MODE === 'true';
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null;
 
 if (!privateKey || !publicKey) {
-    logger.error('Missing PRIVATE_KEY or PUBLIC_KEY environment variables');
+    console.error('Missing PRIVATE_KEY or PUBLIC_KEY environment variables');
     throw new Error('Missing PRIVATE_KEY or PUBLIC_KEY environment variables');
 }
 
 const blacklistToken = async (token) => {
     if (redis) {
         await redis.set(`blacklist:${token}`, 'true', 'EX', ms(REFRESH_TOKEN_EXPIRES) / 1000);
-        logger.info('Token blacklisted', { token: '[REDACTED]' });
+        console.info('Token blacklisted', { token: '[REDACTED]' });
     } else {
-        logger.warn('No Redis; skipping blacklist for token');
+        console.warn('No Redis; skipping blacklist for token');
     }
 };
 
@@ -59,7 +58,7 @@ const setSecurityHeaders = (req, res, next) => {
 const validateCsrfToken = (req, res, next) => {
     const csrfToken = req.headers['x-csrf-token'];
     if (!DEV_MODE && !csrfToken) {
-        logger.warn('CSRF token missing', {
+        console.warn('CSRF token missing', {
             route: req.originalUrl,
             ip: requestIp.getClientIp(req),
             timestamp: new Date().toISOString(),
@@ -100,7 +99,7 @@ const validate = (validations) => [
     (req, res, next) => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
-            logger.warn('Input validation failed', {
+            console.warn('Input validation failed', {
                 errors: errors.array(),
                 route: req.originalUrl,
                 ip: requestIp.getClientIp(req),
@@ -126,7 +125,7 @@ export const register = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Register route accessed', {
+        console.info('Register route accessed', {
             body: { username, email, password: '[REDACTED]' },
             ip,
             country,
@@ -137,7 +136,7 @@ export const register = [
         try {
             const exists = await Users.findOne({ $or: [{ email }, { username }] });
             if (exists) {
-                logger.warn('User already exists', { email, username, ip, country, deviceInfo });
+                console.warn('User already exists', { email, username, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'User with this email or username already exists' });
             }
 
@@ -152,17 +151,17 @@ export const register = [
 
             const token = await user.generateEmailVerifyToken();
             await user.save();
-            logger.info('User registered', { email, userId: user._id, ip, country, deviceInfo });
+            console.info('User registered', { email, userId: user._id, ip, country, deviceInfo });
 
             const emailSent = await sendVerificationEmail(email, null, token);
             if (!emailSent) {
-                logger.error('Failed to send verification email', { email, ip, country, deviceInfo });
+                console.error('Failed to send verification email', { email, ip, country, deviceInfo });
                 return res.status(500).json({ message: 'Failed to send verification email' });
             }
 
             res.status(201).json({ message: 'Verification email sent. Tap the token in the email to copy it and paste it in the app.' });
         } catch (error) {
-            logger.error('Registration error', {
+            console.error('Registration error', {
                 error: error.message,
                 stack: error.stack,
                 email,
@@ -188,7 +187,7 @@ export const verifyEmail = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Verify email route accessed', {
+        console.info('Verify email route accessed', {
             body: { token: '[REDACTED]' },
             ip,
             country,
@@ -203,7 +202,7 @@ export const verifyEmail = [
             });
 
             if (!user) {
-                logger.warn('Invalid or expired verification token', { ip, country, deviceInfo });
+                console.warn('Invalid or expired verification token', { ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid or expired verification token' });
             }
 
@@ -212,10 +211,10 @@ export const verifyEmail = [
             user.isActive = true;
             await user.save();
 
-            logger.info('Email verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Email verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.status(200).json({ message: 'Email verified successfully! You can now log in.' });
         } catch (error) {
-            logger.error('Email verification error', {
+            console.error('Email verification error', {
                 error: error.message,
                 stack: error.stack,
                 ip,
@@ -240,7 +239,7 @@ export const resendVerifyEmail = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Resend verify email route accessed', {
+        console.info('Resend verify email route accessed', {
             body: { usernameOrEmail },
             ip,
             country,
@@ -257,12 +256,12 @@ export const resendVerifyEmail = [
             });
 
             if (!user) {
-                logger.warn('User not found for resend verification email', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('User not found for resend verification email', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
 
             if (user.isActive) {
-                logger.warn('Email already verified', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('Email already verified', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Email already verified' });
             }
 
@@ -271,14 +270,14 @@ export const resendVerifyEmail = [
 
             const emailSent = await sendVerificationEmail(user.email, null, token);
             if (!emailSent) {
-                logger.error('Failed to send verification email', { email: user.email, ip, country, deviceInfo });
+                console.error('Failed to send verification email', { email: user.email, ip, country, deviceInfo });
                 return res.status(500).json({ message: 'Failed to send verification email' });
             }
 
-            logger.info('Verification email resent', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Verification email resent', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.status(200).json({ message: 'Verification email resent successfully' });
         } catch (error) {
-            logger.error('Resend verification email error', {
+            console.error('Resend verification email error', {
                 error: error.message,
                 stack: error.stack,
                 usernameOrEmail,
@@ -305,7 +304,7 @@ export const resendVerifyDevice = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Resend verify device route accessed', {
+        console.info('Resend verify device route accessed', {
             body: { usernameOrEmail, fingerprint },
             ip,
             country,
@@ -322,12 +321,12 @@ export const resendVerifyDevice = [
             });
 
             if (!user) {
-                logger.warn('User not found for resend device verification', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('User not found for resend device verification', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
 
             if (!user.isActive) {
-                logger.warn('Email not verified for resend device verification', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('Email not verified for resend device verification', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Please verify your email first' });
             }
 
@@ -340,14 +339,14 @@ export const resendVerifyDevice = [
 
             const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
             if (!emailSent) {
-                logger.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
+                console.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
                 return res.status(500).json({ message: 'Failed to send device verification email' });
             }
 
-            logger.info('Device verification OTP resent', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Device verification OTP resent', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.status(200).json({ message: 'Device verification OTP resent successfully' });
         } catch (error) {
-            logger.error('Resend device verification error', {
+            console.error('Resend device verification error', {
                 error: error.message,
                 stack: error.stack,
                 usernameOrEmail,
@@ -376,7 +375,7 @@ export const login = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Login route accessed', {
+        console.info('Login route accessed', {
             body: { usernameOrEmail, fingerprint, totp: totp ? '[REDACTED]' : undefined, password: password ? '[REDACTED]' : undefined },
             ip,
             country,
@@ -393,30 +392,30 @@ export const login = [
             });
 
             if (!user) {
-                logger.warn('Invalid login attempt', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('Invalid login attempt', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid credentials' });
             }
 
             if (!user.isActive) {
-                logger.warn('Email not verified', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('Email not verified', { usernameOrEmail, ip, country, deviceInfo });
                 const token = await user.generateEmailVerifyToken();
                 await user.save();
                 const emailSent = await sendVerificationEmail(user.email, null, token);
                 if (!emailSent) {
-                    logger.error('Failed to send verification email during login', { email: user.email, ip, country, deviceInfo });
+                    console.error('Failed to send verification email during login', { email: user.email, ip, country, deviceInfo });
                     return res.status(500).json({ message: 'Failed to send verification email' });
                 }
                 return res.status(400).json({ message: 'Please verify your email to continue', requiresEmailVerification: true });
             }
 
             if (password && !(await user.verifyPassword(password))) {
-                logger.warn('Invalid password', { usernameOrEmail, ip, country, deviceInfo });
+                console.warn('Invalid password', { usernameOrEmail, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid credentials' });
             }
 
             if (user.twoFactorEnabled && !DEV_MODE) {
                 if (!totp) {
-                    logger.warn('TOTP required', { userId: user._id, ip, country, deviceInfo });
+                    console.warn('TOTP required', { userId: user._id, ip, country, deviceInfo });
                     return res.status(400).json({ message: 'TOTP required', requiresTotp: true });
                 }
                 const isValid = speakeasy.totp.verify({
@@ -425,7 +424,7 @@ export const login = [
                     token: totp,
                 });
                 if (!isValid) {
-                    logger.warn('Invalid TOTP', { userId: user._id, ip, country, deviceInfo });
+                    console.warn('Invalid TOTP', { userId: user._id, ip, country, deviceInfo });
                     return res.status(400).json({ message: 'Invalid TOTP' });
                 }
             }
@@ -438,11 +437,11 @@ export const login = [
                     const otp = await user.generateDeviceVerifyToken(fingerprint);
                     const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
                     if (!emailSent) {
-                        logger.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
+                        console.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
                         return res.status(500).json({ message: 'Failed to send verification email' });
                     }
                     await user.save();
-                    logger.info('New device detected; OTP sent', {
+                    console.info('New device detected; OTP sent', {
                         userId: user._id,
                         fingerprint,
                         ip,
@@ -453,7 +452,7 @@ export const login = [
                     });
                     return res.status(200).json({ message: 'New device detected. Verify with OTP sent to your email.', requiresOtp: true });
                 } catch (error) {
-                    logger.error('Error during device verification setup', {
+                    console.error('Error during device verification setup', {
                         error: error.message,
                         stack: error.stack,
                         userId: user._id,
@@ -474,7 +473,7 @@ export const login = [
             const refreshToken = await user.generateRefreshToken(fingerprint || 'dev-mode', ip, country, deviceInfo);
 
             await user.save();
-            logger.info('Login successful', { userId: user._id, username: user.username, ip, country, deviceInfo });
+            console.info('Login successful', { userId: user._id, username: user.username, ip, country, deviceInfo });
 
             return res.json({
                 accessToken,
@@ -483,7 +482,7 @@ export const login = [
                 user: sanitizeUser(user),
             });
         } catch (error) {
-            logger.error('Login error', {
+            console.error('Login error', {
                 error: error.message,
                 stack: error.stack,
                 usernameOrEmail,
@@ -511,7 +510,7 @@ export const verifyDevice = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Verify device route accessed', {
+        console.info('Verify device route accessed', {
             body: { usernameOrEmail, fingerprint, otp: '[REDACTED]' },
             ip,
             country,
@@ -530,7 +529,7 @@ export const verifyDevice = [
             });
 
             if (!user) {
-                logger.warn('Invalid or expired device verification', {
+                console.warn('Invalid or expired device verification', {
                     usernameOrEmail,
                     fingerprint,
                     ip,
@@ -551,7 +550,7 @@ export const verifyDevice = [
 
             const isMatch = await bcrypt.compare(otp, user.deviceVerifyToken);
             if (!isMatch) {
-                logger.warn('Invalid OTP', { userId: user._id, ip, country, deviceInfo });
+                console.warn('Invalid OTP', { userId: user._id, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid OTP' });
             }
 
@@ -568,7 +567,7 @@ export const verifyDevice = [
             const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
             await user.save();
 
-            logger.info('Device verified successfully', { userId: user._id, username: user.username, ip, country, deviceInfo });
+            console.info('Device verified successfully', { userId: user._id, username: user.username, ip, country, deviceInfo });
             res.json({
                 accessToken,
                 refreshToken,
@@ -576,7 +575,7 @@ export const verifyDevice = [
                 user: sanitizeUser(user),
             });
         } catch (error) {
-            logger.error('Verify device error', {
+            console.error('Verify device error', {
                 error: error.message,
                 stack: error.stack,
                 usernameOrEmail,
@@ -605,7 +604,7 @@ export const refreshToken = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Refresh token route accessed', {
+        console.info('Refresh token route accessed', {
             body: { fingerprint, refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
             ip,
             country,
@@ -615,7 +614,7 @@ export const refreshToken = [
 
         try {
             if (await isBlacklisted(refreshToken)) {
-                logger.warn('Blacklisted refresh token', { ip, country, deviceInfo });
+                console.warn('Blacklisted refresh token', { ip, country, deviceInfo });
                 return res.status(401).json({ message: 'Invalid refresh token' });
             }
 
@@ -626,13 +625,13 @@ export const refreshToken = [
             });
             const user = await Users.findById(payload.userId);
             if (!user) {
-                logger.warn('User not found for refresh token', { userId: payload.userId, ip, country, deviceInfo });
+                console.warn('User not found for refresh token', { userId: payload.userId, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
 
             const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken && s.csrfToken === csrfToken);
             if (sessionIndex === -1) {
-                logger.warn('Invalid refresh token or CSRF token', {
+                console.warn('Invalid refresh token or CSRF token', {
                     userId: user._id,
                     ip,
                     country,
@@ -655,7 +654,7 @@ export const refreshToken = [
                     });
                     user.sessions = [];
                     await user.save();
-                    logger.warn('Fingerprint mismatch, sessions cleared', { userId: user._id, ip, country, deviceInfo });
+                    console.warn('Fingerprint mismatch, sessions cleared', { userId: user._id, ip, country, deviceInfo });
                     return res.status(401).json({ message: 'New device detected. Please re-login to verify.' });
                 }
             }
@@ -663,7 +662,7 @@ export const refreshToken = [
             if (session.used) {
                 user.sessions = [];
                 await user.save();
-                logger.warn('Token reuse detected, sessions cleared', { userId: user._id, ip, country, deviceInfo });
+                console.warn('Token reuse detected, sessions cleared', { userId: user._id, ip, country, deviceInfo });
                 return res.status(401).json({ message: 'Token reuse detected - all sessions invalidated' });
             }
 
@@ -673,7 +672,7 @@ export const refreshToken = [
             await user.save();
 
             const newAccess = await user.generateAccessToken();
-            logger.info('Refresh token rotated successfully', { userId: user._id, ip, country, deviceInfo });
+            console.info('Refresh token rotated successfully', { userId: user._id, ip, country, deviceInfo });
 
             res.json({
                 accessToken: newAccess,
@@ -681,7 +680,7 @@ export const refreshToken = [
                 csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
             });
         } catch (error) {
-            logger.error('Refresh token error', {
+            console.error('Refresh token error', {
                 error: error.message,
                 stack: error.stack,
                 ip,
@@ -705,7 +704,7 @@ export const logout = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Logout route accessed', {
+        console.info('Logout route accessed', {
             body: { refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
             ip,
             country,
@@ -717,13 +716,13 @@ export const logout = [
             const payload = jwt.verify(refreshToken, publicKey, { algorithms: ['RS256'] });
             const user = await Users.findById(payload.userId);
             if (!user) {
-                logger.warn('User not found for logout', { userId: payload.userId, ip, country, deviceInfo });
+                console.warn('User not found for logout', { userId: payload.userId, ip, country, deviceInfo });
                 return res.status(401).json({ message: 'Invalid refresh token' });
             }
 
             const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken && (!csrfToken || s.csrfToken === csrfToken));
             if (sessionIndex === -1) {
-                logger.warn('Invalid refresh token or CSRF token', {
+                console.warn('Invalid refresh token or CSRF token', {
                     userId: user._id,
                     ip,
                     country,
@@ -737,10 +736,10 @@ export const logout = [
             user.sessions = user.sessions.filter((s) => s.token !== refreshToken);
             await blacklistToken(refreshToken);
             await user.save();
-            logger.info('User logged out successfully', { userId: user._id, ip, country, deviceInfo });
+            console.info('User logged out successfully', { userId: user._id, ip, country, deviceInfo });
             res.json({ message: 'Logged out successfully' });
         } catch (error) {
-            logger.error('Logout error', {
+            console.error('Logout error', {
                 error: error.message,
                 stack: error.stack,
                 ip,
@@ -763,7 +762,7 @@ export const requestPasswordReset = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Request password reset accessed', {
+        console.info('Request password reset accessed', {
             body: { email },
             ip,
             country,
@@ -774,11 +773,11 @@ export const requestPasswordReset = [
         try {
             const user = await Users.findOne({ email });
             if (!user) {
-                logger.warn('User not found for password reset', { email, ip, country, deviceInfo });
+                console.warn('User not found for password reset', { email, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
             if (!user.isActive) {
-                logger.warn('Email not verified for password reset', { email, ip, country, deviceInfo });
+                console.warn('Email not verified for password reset', { email, ip, country, deviceInfo });
                 return res.status(401).json({ message: 'Email not verified' });
             }
 
@@ -789,14 +788,14 @@ export const requestPasswordReset = [
             const emailSent = await sendPasswordResetEmail(email, resetUrl);
 
             if (!emailSent) {
-                logger.error('Failed to send password reset email', { email, ip, country, deviceInfo });
+                console.error('Failed to send password reset email', { email, ip, country, deviceInfo });
                 return res.status(500).json({ message: 'Failed to send password reset email' });
             }
 
-            logger.info('Password reset email sent', { email, ip, country, deviceInfo });
+            console.info('Password reset email sent', { email, ip, country, deviceInfo });
             res.json({ message: 'Password reset email sent. Please check your inbox.' });
         } catch (error) {
-            logger.error('Request password reset error', {
+            console.error('Request password reset error', {
                 error: error.message,
                 stack: error.stack,
                 email,
@@ -805,7 +804,7 @@ export const requestPasswordReset = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            return res.status(500).json({ message: 'Server error during password reset request' });
+            res.status(500).json({ message: 'Server error during password reset request' });
         }
     }),
 ];
@@ -829,7 +828,7 @@ export const resetPassword = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Reset password route accessed', {
+        console.info('Reset password route accessed', {
             body: { newPassword: '[REDACTED]', confirmPassword: '[REDACTED]' },
             ip,
             country,
@@ -843,13 +842,13 @@ export const resetPassword = [
                 passwordResetExpires: { $gt: Date.now() },
             });
             if (!user) {
-                logger.warn('Invalid or expired reset token', { ip, country, deviceInfo });
+                console.warn('Invalid or expired reset token', { ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid or expired reset token' });
             }
 
             const isSamePassword = await bcrypt.compare(newPassword, user.password);
             if (isSamePassword) {
-                logger.warn('New password same as old', { userId: user._id, ip, country, deviceInfo });
+                console.warn('New password same as old', { userId: user._id, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'New password cannot be the same as the old password' });
             }
 
@@ -858,10 +857,10 @@ export const resetPassword = [
             user.passwordResetExpires = undefined;
             await user.save();
 
-            logger.info('Password reset successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Password reset successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.json({ message: 'Password reset successful! You can now log in with your new password.' });
         } catch (error) {
-            logger.error('Reset password error', {
+            console.error('Reset password error', {
                 error: error.message,
                 stack: error.stack,
                 ip,
@@ -874,7 +873,6 @@ export const resetPassword = [
     }),
 ];
 
-// Adding verifyResetToken endpoint
 export const verifyResetToken = [
     setSecurityHeaders,
     validate([query('token').notEmpty().withMessage('Reset token is required')]),
@@ -885,7 +883,7 @@ export const verifyResetToken = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Verify reset token route accessed', {
+        console.info('Verify reset token route accessed', {
             query: { token: '[REDACTED]' },
             ip,
             country,
@@ -899,13 +897,13 @@ export const verifyResetToken = [
                 passwordResetExpires: { $gt: Date.now() },
             });
             if (!user) {
-                logger.warn('Invalid or expired reset token', { ip, country, deviceInfo });
+                console.warn('Invalid or expired reset token', { ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Invalid or expired reset token' });
             }
-            logger.info('Reset token verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Reset token verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.status(200).json({ message: 'Reset token is valid' });
         } catch (error) {
-            logger.error('Verify reset token error', {
+            console.error('Verify reset token error', {
                 error: error.message,
                 stack: error.stack,
                 ip,
@@ -929,7 +927,7 @@ export const updateProfileImage = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Update profile image route accessed', {
+        console.info('Update profile image route accessed', {
             userId,
             ip,
             country,
@@ -940,11 +938,11 @@ export const updateProfileImage = [
         try {
             const user = await Users.findById(userId);
             if (!user) {
-                logger.warn('User not found for profile image update', { userId, ip, country, deviceInfo });
+                console.warn('User not found for profile image update', { userId, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
             if (!user.isActive) {
-                logger.warn('Email not verified for profile image update', { userId, ip, country, deviceInfo });
+                console.warn('Email not verified for profile image update', { userId, ip, country, deviceInfo });
                 return res.status(403).json({ message: 'Only verified users can update profile image' });
             }
 
@@ -958,13 +956,13 @@ export const updateProfileImage = [
             user.profileImage = uploaded.secure_url;
             await user.save();
 
-            logger.info('Profile image updated successfully', { userId, email: user.email, ip, country, deviceInfo });
+            console.info('Profile image updated successfully', { userId, email: user.email, ip, country, deviceInfo });
             res.status(200).json({
                 message: 'Profile image updated successfully',
                 profileImage: user.profileImage,
             });
         } catch (error) {
-            logger.error('Update profile image error', {
+            console.error('Update profile image error', {
                 error: error.message,
                 stack: error.stack,
                 userId,
@@ -993,7 +991,7 @@ export const updateUsername = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Update username route accessed', {
+        console.info('Update username route accessed', {
             body: { newUsername },
             userId,
             ip,
@@ -1005,30 +1003,30 @@ export const updateUsername = [
         try {
             const user = await Users.findById(userId);
             if (!user) {
-                logger.warn('User not found for username update', { userId, ip, country, deviceInfo });
+                console.warn('User not found for username update', { userId, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
             if (!user.isActive) {
-                logger.warn('Email not verified for username update', { userId, ip, country, deviceInfo });
+                console.warn('Email not verified for username update', { userId, ip, country, deviceInfo });
                 return res.status(403).json({ message: 'Only verified users can update username' });
             }
 
             const existing = await Users.findOne({ username: newUsername });
             if (existing) {
-                logger.warn('Username already taken', { userId, newUsername, ip, country, deviceInfo });
+                console.warn('Username already taken', { userId, newUsername, ip, country, deviceInfo });
                 return res.status(400).json({ message: 'Username already taken' });
             }
 
             user.username = newUsername;
             await user.save();
 
-            logger.info('Username updated successfully', { userId, username: newUsername, ip, country, deviceInfo });
+            console.info('Username updated successfully', { userId, username: newUsername, ip, country, deviceInfo });
             res.status(200).json({
                 message: 'Username updated successfully',
                 username: user.username,
             });
         } catch (error) {
-            logger.error('Update username error', {
+            console.error('Update username error', {
                 error: error.message,
                 stack: error.stack,
                 userId,
@@ -1050,7 +1048,7 @@ export const getProfile = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Get profile route accessed', {
+        console.info('Get profile route accessed', {
             userId: req.user.id,
             ip,
             country,
@@ -1061,17 +1059,17 @@ export const getProfile = [
         try {
             const user = await Users.findById(req.user.id);
             if (!user) {
-                logger.warn('User not found for profile fetch', { userId: req.user.id, ip, country, deviceInfo });
+                console.warn('User not found for profile fetch', { userId: req.user.id, ip, country, deviceInfo });
                 return res.status(404).json({ message: 'User not found' });
             }
 
-            logger.info('Profile fetched successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Profile fetched successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
             res.status(200).json({
                 message: 'Profile fetched successfully',
                 user: sanitizeUser(user),
             });
         } catch (error) {
-            logger.error('Get profile error', {
+            console.error('Get profile error', {
                 error: error.message,
                 stack: error.stack,
                 userId: req.user.id,
@@ -1093,7 +1091,7 @@ export const getAdminDashboard = [
         const country = geo ? geo.country : 'unknown';
         const deviceInfo = req.headers['user-agent'] || 'unknown';
 
-        logger.info('Admin dashboard accessed', {
+        console.info('Admin dashboard accessed', {
             userId: req.user.id,
             email: req.user.email,
             ip,
@@ -1104,14 +1102,14 @@ export const getAdminDashboard = [
 
         try {
             const users = await Users.find().select('username email role isActive createdAt');
-            logger.info('Admin dashboard fetched successfully', { userId: req.user.id, ip, country, deviceInfo });
+            console.info('Admin dashboard fetched successfully', { userId: req.user.id, ip, country, deviceInfo });
             res.status(200).json({
                 message: `Admin access granted for ${req.user.email}`,
                 totalUsers: users.length,
                 users,
             });
         } catch (error) {
-            logger.error('Admin dashboard error', {
+            console.error('Admin dashboard error', {
                 error: error.message,
                 stack: error.stack,
                 userId: req.user.id,

@@ -1,6 +1,5 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import { logger } from '../logger/logger.js'; // Import Pino logger
 
 // Load environment variables
 dotenv.config();
@@ -13,25 +12,25 @@ const SMTP_PORT = 465;
 
 // Configure nodemailer transporter
 const transporter = nodemailer.createTransport({
-    host: SMTP_SERVER,
-    port: SMTP_PORT,
-    secure: true,
-    auth: {
-        user: EMAIL_SENDER,
-        pass: EMAIL_PASSWORD,
-    },
+  host: SMTP_SERVER,
+  port: SMTP_PORT,
+  secure: true,
+  auth: {
+    user: EMAIL_SENDER,
+    pass: EMAIL_PASSWORD,
+  },
 });
 
 export async function sendVerificationEmail(receiverEmail, verificationLink, token) {
-    try {
-        if (EMAIL_SENDER === 'no-email-set' || EMAIL_PASSWORD === 'no-password-set') {
-            logger.error('Email sender or password not set', { timestamp: new Date().toISOString() });
-            throw new Error('Email sender or password not set');
-        }
+  try {
+    if (EMAIL_SENDER === 'no-email-set' || EMAIL_PASSWORD === 'no-password-set') {
+      console.error('Email sender or password not set', { timestamp: new Date().toISOString() });
+      throw new Error('Email sender or password not set');
+    }
 
-        const subject = 'Verify Your Email - Trade Divinely Bot';
-        const plainBody = `
-      Welcome to Trade Divinely Bot 🎉
+    const subject = 'Verify Your Email - Trade Divinely Bot';
+    const plainBody = `
+      Welcome to Trade Divinely Bot
 
       To verify your email, tap and hold the following token to select and copy it, then paste it into the Verify Email screen in the app:
 
@@ -39,20 +38,20 @@ export async function sendVerificationEmail(receiverEmail, verificationLink, tok
 
       This token expires in 15 minutes. If you didn't register, ignore this email.
     `;
-        const htmlBody = `
+    const htmlBody = `
       <html>
       <body style="margin:0; padding:0; font-family: Arial, sans-serif; background-color:#f4f7fb;">
         <table width="100%" border="0" cellspacing="0" cellpadding="0" style="padding:20px 0;">
           <tr>
             <td align="center">
               <table width="600" border="0" cellspacing="0" cellpadding="0" 
-                style="background:#ffffff; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.1); overflow:hidden;">
+                style  style="background:#ffffff; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.1); overflow:hidden;">
                 
                 <tr>
                   <td align="center" 
                     style="background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%); 
                       padding:30px; color:#ffffff; font-size:24px; font-weight:bold;">
-                    Trade Divinely Bot 🎉
+                    Trade Divinely Bot
                   </td>
                 </tr>
 
@@ -91,22 +90,22 @@ export async function sendVerificationEmail(receiverEmail, verificationLink, tok
       </html>
     `;
 
-        await transporter.sendMail({
-            from: EMAIL_SENDER,
-            to: receiverEmail,
-            subject: subject,
-            text: plainBody,
-            html: htmlBody,
-        });
+    await transporter.sendMail({
+      from: EMAIL_SENDER,
+      to: receiverEmail,
+      subject: subject,
+      text: plainBody,
+      html: htmlBody,
+    });
 
-        logger.info(`Verification email sent`, { receiverEmail, timestamp: new Date().toISOString() });
-        return true;
-    } catch (error) {
-        logger.error(`Failed to send verification email`, {
-            receiverEmail,
-            error: error.message,
-            timestamp: new Date().toISOString(),
-        });
-        return false;
-    }
+    console.info(`Verification email sent`, { receiverEmail, timestamp: new Date().toISOString() });
+    return true;
+  } catch (error) {
+    console.error(`Failed to send verification email`, {
+      receiverEmail,
+      error: error.message,
+      timestamp: new Date().toISOString(),
+    });
+    return false;
+  }
 }

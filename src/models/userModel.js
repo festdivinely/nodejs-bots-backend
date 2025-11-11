@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
-import { logger } from "../logger/logger.js";
 import crypto from "crypto";
 import ms from "ms";
 
@@ -124,10 +123,10 @@ UserSchema.pre("save", async function (next) {
     try {
         const salt = await bcrypt.genSalt(12);
         this.password = await bcrypt.hash(this.password, salt);
-        logger.info("Password hashed successfully", { userId: this._id?.toString(), email: this.email });
+        console.info("Password hashed successfully", { userId: this._id?.toString(), email: this.email });
         next();
     } catch (error) {
-        logger.error("Failed to hash password", { userId: this._id?.toString(), email: this.email, error: error.message });
+        console.error("Failed to hash password", { userId: this._id?.toString(), email: this.email, error: error.message });
         next(error);
     }
 });
@@ -139,10 +138,10 @@ UserSchema.methods.generateAccessToken = function () {
             privateKey,
             { expiresIn: "15m", algorithm: "RS256" }
         );
-        logger.info("Access token generated", { userId: this._id.toString(), email: this.email });
+        console.info("Access token generated", { userId: this._id.toString(), email: this.email });
         return token;
     } catch (error) {
-        logger.error("Failed to generate access token", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to generate access token", { userId: this._id.toString(), email: this.email, error: error.message });
         throw error;
     }
 };
@@ -170,10 +169,10 @@ UserSchema.methods.generateRefreshToken = async function (fingerprint, ip, count
         };
         this.sessions.push(session);
         await this.save();
-        logger.info("Refresh token generated", { userId: this._id.toString(), email: this.email, jti, fingerprint });
+        console.info("Refresh token generated", { userId: this._id.toString(), email: this.email, jti, fingerprint });
         return token;
     } catch (error) {
-        logger.error("Failed to generate refresh token", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to generate refresh token", { userId: this._id.toString(), email: this.email, error: error.message });
         throw error;
     }
 };
@@ -188,10 +187,10 @@ UserSchema.methods.generateEmailVerifyToken = async function () {
         this.emailVerifyToken = token;
         this.emailVerifyExpires = new Date(Date.now() + ms("15m"));
         await this.save();
-        logger.info("Email verification token generated", { userId: this._id.toString(), email: this.email });
+        console.info("Email verification token generated", { userId: this._id.toString(), email: this.email });
         return token;
     } catch (error) {
-        logger.error("Failed to generate email verification token", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to generate email verification token", { userId: this._id.toString(), email: this.email, error: error.message });
         throw error;
     }
 };
@@ -206,10 +205,10 @@ UserSchema.methods.generatePasswordResetToken = async function () {
         this.passwordResetToken = token;
         this.passwordResetExpires = new Date(Date.now() + ms("15m"));
         await this.save();
-        logger.info("Password reset token generated", { userId: this._id.toString(), email: this.email });
+        console.info("Password reset token generated", { userId: this._id.toString(), email: this.email });
         return token;
     } catch (error) {
-        logger.error("Failed to generate password reset token", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to generate password reset token", { userId: this._id.toString(), email: this.email, error: error.message });
         throw error;
     }
 };
@@ -218,11 +217,11 @@ UserSchema.methods.verifyPassword = async function (candidatePassword) {
     try {
         const isMatch = await bcrypt.compare(candidatePassword, this.password);
         if (!isMatch) {
-            logger.warn("Failed password verification attempt", { userId: this._id?.toString(), email: this.email });
+            console.warn("Failed password verification attempt", { userId: this._id?.toString(), email: this.email });
         }
         return isMatch;
     } catch (error) {
-        logger.error("Error during password verification", { userId: this._id?.toString(), email: this.email, error: error.message });
+        console.error("Error during password verification", { userId: this._id?.toString(), email: this.email, error: error.message });
         throw error;
     }
 };
@@ -231,9 +230,9 @@ UserSchema.methods.cleanSessions = async function () {
     try {
         this.sessions = this.sessions.filter(s => s.expires > new Date() && !s.used);
         await this.save();
-        logger.info("Sessions cleaned", { userId: this._id.toString(), email: this.email });
+        console.info("Sessions cleaned", { userId: this._id.toString(), email: this.email });
     } catch (error) {
-        logger.error("Failed to clean sessions", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to clean sessions", { userId: this._id.toString(), email: this.email, error: error.message });
         throw error;
     }
 };
@@ -246,7 +245,7 @@ UserSchema.methods.generateDeviceVerifyToken = async function (fingerprint) {
         this.deviceVerifyFingerprint = fingerprint;
         this.deviceVerifyExpires = new Date(Date.now() + ms("15m")); // Extended to 15 minutes
         await this.save(); // Ensure fields are persisted
-        logger.info("Device verification token generated", {
+        console.info("Device verification token generated", {
             userId: this._id.toString(),
             email: this.email,
             fingerprint,
@@ -255,7 +254,7 @@ UserSchema.methods.generateDeviceVerifyToken = async function (fingerprint) {
         });
         return otp;
     } catch (error) {
-        logger.error("Failed to generate device verification token", {
+        console.error("Failed to generate device verification token", {
             userId: this._id.toString(),
             email: this.email,
             fingerprint,

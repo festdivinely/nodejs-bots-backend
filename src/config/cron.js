@@ -2,7 +2,6 @@ import cron from "cron";
 import http from "http";
 import https from "https";
 import Users from "../models/userModel.js";
-import { logger } from "../logger/logger.js";
 
 const job = new cron.CronJob("*/14 * * * *", async function () {
   const keepAlive = () =>
@@ -14,14 +13,14 @@ const job = new cron.CronJob("*/14 * * * *", async function () {
         client
           .get(url, (res) => {
             if (res.statusCode === 200) {
-              logger.info("Keep-alive request sent successfully", {
+              console.info("Keep-alive request sent successfully", {
                 url,
                 statusCode: res.statusCode,
                 timestamp: new Date().toISOString(),
               });
               resolve(true);
             } else {
-              logger.error("Keep-alive request failed", {
+              console.error("Keep-alive request failed", {
                 url,
                 statusCode: res.statusCode,
                 timestamp: new Date().toISOString(),
@@ -30,7 +29,7 @@ const job = new cron.CronJob("*/14 * * * *", async function () {
             }
           })
           .on("error", (e) => {
-            logger.error("Error while sending keep-alive request", {
+            console.error("Error while sending keep-alive request", {
               url,
               error: e.message,
               timestamp: new Date().toISOString(),
@@ -50,10 +49,10 @@ const job = new cron.CronJob("*/14 * * * *", async function () {
       break;
     } catch (error) {
       if (i < maxRetries - 1) {
-        logger.info(`Retrying keep-alive request (${i + 2}/${maxRetries}) in 5 seconds...`);
+        console.info(`Retrying keep-alive request (${i + 2}/${maxRetries}) in 5 seconds...`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
       } else {
-        logger.error("Keep-alive request failed after max retries", {
+        console.error("Keep-alive request failed after max retries", {
           url: process.env.NODE_JS_API_URL,
           error: error.message,
         });
@@ -70,12 +69,12 @@ const job = new cron.CronJob("*/14 * * * *", async function () {
       await user.cleanSessions();
       cleanedSessions += initialCount - user.sessions.length;
     }
-    logger.info("Session cleanup completed", {
+    console.info("Session cleanup completed", {
       cleanedSessions,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error("Session cleanup failed fatal", {
+    console.error("Session cleanup failed fatal", {
       error: error.message,
       timestamp: new Date().toISOString(),
     });
@@ -83,7 +82,6 @@ const job = new cron.CronJob("*/14 * * * *", async function () {
 });
 
 export default job;
-
 
 // CRON JOB EXPLANATION:
 // Cron jobs are scheduled tasks that run periodically at fixed intervals

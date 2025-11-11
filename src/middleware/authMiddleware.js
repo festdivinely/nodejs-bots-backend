@@ -16,7 +16,7 @@ const AUDIENCE = process.env.AUDIENCE || "api.quantumrobots.com";
 export const csrfProtect = asyncHandler(async (req, res, next) => {
     const csrfToken = req.headers["x-csrf-token"];
     if (!csrfToken) {
-        logger.warn("Missing CSRF token", { route: req.originalUrl });
+        console.warn("Missing CSRF token", { route: req.originalUrl });
         return res.status(403).json({ message: "Missing CSRF token" });
     }
 
@@ -24,13 +24,13 @@ export const csrfProtect = asyncHandler(async (req, res, next) => {
     const payload = jwt.verify(token, publicKey, { algorithms: ["RS256"], issuer: ISSUER, audience: AUDIENCE });
     const user = await Users.findById(payload.userId);
     if (!user) {
-        logger.warn("User not found for CSRF check", { userId: payload.userId });
+        console.warn("User not found for CSRF check", { userId: payload.userId });
         return res.status(401).json({ message: "User not found" });
     }
 
     const session = user.sessions.find(s => s.expires > new Date() && !s.used);
     if (!session || session.csrfToken !== csrfToken) {
-        logger.warn("Invalid CSRF token", { userId: user._id, route: req.originalUrl });
+        console.warn("Invalid CSRF token", { userId: user._id, route: req.originalUrl });
         return res.status(403).json({ message: "Invalid CSRF token" });
     }
     next();
@@ -39,7 +39,7 @@ export const csrfProtect = asyncHandler(async (req, res, next) => {
 export const protect = asyncHandler(async (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) {
-        logger.warn("No token provided", { route: req.originalUrl });
+        console.warn("No token provided", { route: req.originalUrl });
         return res.status(401).json({ message: "Not authorized, no token provided" });
     }
 
@@ -52,20 +52,20 @@ export const protect = asyncHandler(async (req, res, next) => {
 
         const user = await Users.findById(decoded.userId).select("-password -sessions -emailVerifyToken");
         if (!user) {
-            logger.warn("User not found for token", { userId: decoded.userId });
+            console.warn("User not found for token", { userId: decoded.userId });
             return res.status(401).json({ message: "User not found" });
         }
         if (!user.isActive) {
-            logger.warn("Inactive user attempted access", { userId: decoded.userId });
+            console.warn("Inactive user attempted access", { userId: decoded.userId });
             return res.status(403).json({ message: "User account is inactive" });
         }
 
         await user.cleanSessions();
         req.user = user;
-        logger.info("User authenticated", { userId: user.id, route: req.originalUrl });
+        console.info("User authenticated", { userId: user.id, route: req.originalUrl });
         next();
     } catch (error) {
-        logger.error("Token verification failed", { error: error.message });
+        console.error("Token verification failed", { error: error.message });
         if (error.name === "TokenExpiredError") {
             return res.status(401).json({ message: "Token expired, please refresh or login again" });
         }
@@ -76,12 +76,11 @@ export const protect = asyncHandler(async (req, res, next) => {
 export const requireRole = (roles) => {
     return asyncHandler(async (req, res, next) => {
         if (!req.user || !roles.includes(req.user.role)) {
-            logger.warn("Insufficient permissions", { userId: req.user?.id, role: req.user?.role, requiredRoles: roles });
+            console.warn("Insufficient permissions", { userId: req.user?.id, role: req.user?.role, requiredRoles: roles });
             return res.status(403).json({ message: `Forbidden: requires one of ${roles.join(", ")} role` });
         }
-        logger.info("Role check passed", { userId: req.user.id, role: req.user.role, route: req.originalUrl });
+        console.info("Role check passed", { userId: req.user.id, role: req.user.role, route: req.originalUrl });
         next();
     });
 };
-
 // HTTPS enforcement (in app.js)

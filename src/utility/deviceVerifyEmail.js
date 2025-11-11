@@ -1,6 +1,5 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import { logger } from '../logger/logger.js'; // Import Pino logger
 
 // Load environment variables
 dotenv.config();
@@ -32,7 +31,7 @@ export async function sendDeviceVerificationEmail(receiverEmail, otp, deviceInfo
     try {
         // Validate environment variables
         if (EMAIL_SENDER === 'no-email-set' || EMAIL_PASSWORD === 'no-password-set') {
-            logger.error('Email sender or password not set in environment variables', { timestamp: new Date().toISOString() });
+            console.error('Email sender or password not set in environment variables', { timestamp: new Date().toISOString() });
             throw new Error('Email sender or password not set in environment variables');
         }
 
@@ -70,7 +69,7 @@ export async function sendDeviceVerificationEmail(receiverEmail, otp, deviceInfo
                                 <!-- Header -->
                                 <tr>
                                     <td align="center" style="background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%); padding:30px; color:#ffffff; font-size:24px; font-weight:bold;">
-                                        Trade Divinely Bot 🔐 Device Verification
+                                        Trade Divinely Bot Device Verification
                                     </td>
                                 </tr>
                                 <!-- Body -->
@@ -101,7 +100,7 @@ export async function sendDeviceVerificationEmail(receiverEmail, otp, deviceInfo
                                 <tr>
                                     <td align="center" style="background:#f4f7fb; padding:20px; font-size:13px; color:#888888;">
                                         &copy; ${new Date().getFullYear()} Trade Divinely Bot. All rights reserved.<br/>
-                                        This is an automated security notification. Do not reply.
+                                        This is an automated  an automated security notification. Do not reply.
                                     </td>
                                 </tr>
                             </table>
@@ -122,17 +121,17 @@ export async function sendDeviceVerificationEmail(receiverEmail, otp, deviceInfo
             html: htmlBody
         });
 
-        logger.info('Device verification email sent successfully', { receiverEmail, otp: otp.substring(0, 2) + '...', ip: safeIp, timestamp: new Date().toISOString() });
+        console.info('Device verification email sent successfully', { receiverEmail, otp: otp.substring(0, 2) + '...', ip: safeIp, timestamp: new Date().toISOString() });
         return true;
     } catch (error) {
         if (error.code === 'EAUTH') {
-            logger.error('Authentication failed. Check your email and App Password.', {
+            console.error('Authentication failed. Check your email and App Password.', {
                 receiverEmail,
                 error: error.message,
                 timestamp: new Date().toISOString()
             });
         } else {
-            logger.error('Failed to send device verification email', {
+            console.error('Failed to send device verification email', {
                 receiverEmail,
                 error: error.message,
                 timestamp: new Date().toISOString()

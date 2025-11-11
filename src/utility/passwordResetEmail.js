@@ -1,6 +1,5 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import { logger } from '../logger/logger.js'; // Import Pino logger
 
 // Load environment variables
 dotenv.config();
@@ -14,32 +13,32 @@ const SECURITY = 'SSL';
 
 // Configure nodemailer transporter
 const transporter = nodemailer.createTransport({
-    host: SMTP_SERVER,
-    port: SMTP_PORT,
-    secure: true, // true for 465 (SSL)
-    auth: {
-        user: EMAIL_SENDER,
-        pass: EMAIL_PASSWORD
-    }
+  host: SMTP_SERVER,
+  port: SMTP_PORT,
+  secure: true, // true for 465 (SSL)
+  auth: {
+    user: EMAIL_SENDER,
+    pass: EMAIL_PASSWORD
+  }
 });
 
 export async function sendPasswordResetEmail(receiverEmail, resetLink) {
-    /**
-     * Send a password reset email to the specified receiver.
-     * Returns true if the email was sent successfully, false otherwise.
-     */
-    try {
-        // Validate environment variables
-        if (EMAIL_SENDER === 'no-email-set' || EMAIL_PASSWORD === 'no-password-set') {
-            logger.error('Email sender or password not set in environment variables', { timestamp: new Date().toISOString() });
-            throw new Error('Email sender or password not set in environment variables');
-        }
+  /**
+   * Send a password reset email to the specified receiver.
+   * Returns true if the email was sent successfully, false otherwise.
+   */
+  try {
+    // Validate environment variables
+    if (EMAIL_SENDER === 'no-email-set' || EMAIL_PASSWORD === 'no-password-set') {
+      console.error('Email sender or password not set in environment variables', { timestamp: new Date().toISOString() });
+      throw new Error('Email sender or password not set in environment variables');
+    }
 
-        // Email content
-        const subject = 'Reset Your Password - Trade Divinely Bot';
-        const plainBody = `You requested a password reset for Trade Divinely Bot. Please reset your password by clicking the link below:\n${resetLink}\nThis link will expire in 15 minutes for your security.\nIf you didn’t request a password reset, please ignore this email or contact support.`;
+    // Email content
+    const subject = 'Reset Your Password - Trade Divinely Bot';
+    const plainBody = `You requested a password reset for Trade Divinely Bot. Please reset your password by clicking the link below:\n${resetLink}\nThis link will expire in 15 minutes for your security.\nIf you didn’t request a password reset, please ignore this email or contact support.`;
 
-        const htmlBody = `
+    const htmlBody = `
       <html>
         <body style="margin:0; padding:0; font-family: Arial, sans-serif; background-color:#f4f7fb;">
           <table width="100%" border="0" cellspacing="0" cellpadding="0" style="padding:20px 0;">
@@ -50,7 +49,7 @@ export async function sendPasswordResetEmail(receiverEmail, resetLink) {
                   <!-- Header -->
                   <tr>
                     <td align="center" style="background: linear-gradient(90deg, #ff6b6b 0%, #ff8e53 100%); padding:30px; color:#ffffff; font-size:24px; font-weight:bold;">
-                      Trade Divinely Bot 🔒
+                      Trade Divinely Bot
                     </td>
                   </tr>
                   <!-- Body -->
@@ -63,7 +62,7 @@ export async function sendPasswordResetEmail(receiverEmail, resetLink) {
                       <!-- Button -->
                       <p style="text-align:center; margin:30px 0;">
                         <a href="${resetLink}" style="background: #ff6b6b; color:#ffffff; text-decoration:none; padding:14px 28px; border-radius:6px; font-size:16px; font-weight:bold; display:inline-block;">
-                          🔄 Reset Password
+                          Reset Password
                         </a>
                       </p>
                       <p>
@@ -87,31 +86,31 @@ export async function sendPasswordResetEmail(receiverEmail, resetLink) {
       </html>
     `;
 
-        // Send email
-        await transporter.sendMail({
-            from: EMAIL_SENDER,
-            to: receiverEmail,
-            subject: subject,
-            text: plainBody,
-            html: htmlBody
-        });
+    // Send email
+    await transporter.sendMail({
+      from: EMAIL_SENDER,
+      to: receiverEmail,
+      subject: subject,
+      text: plainBody,
+      html: htmlBody
+    });
 
-        logger.info('Password reset email sent successfully', { receiverEmail, timestamp: new Date().toISOString() });
-        return true;
-    } catch (error) {
-        if (error.code === 'EAUTH') {
-            logger.error('Authentication failed. Check your email and App Password.', {
-                receiverEmail,
-                error: error.message,
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            logger.error('Failed to send password reset email', {
-                receiverEmail,
-                error: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
-        return false;
+    console.info('Password reset email sent successfully', { receiverEmail, timestamp: new Date().toISOString() });
+    return true;
+  } catch (error) {
+    if (error.code === 'EAUTH') {
+      console.error('Authentication failed. Check your email and App Password.', {
+        receiverEmail,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      console.error('Failed to send password reset email', {
+        receiverEmail,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
     }
+    return false;
+  }
 }

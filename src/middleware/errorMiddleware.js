@@ -1,5 +1,4 @@
 // backend/middleware/errorHandler.js
-import { logger } from '../logger/logger.js';
 import crypto from 'crypto'; // Ensure crypto is imported for randomUUID
 
 // Custom Error Classes
@@ -72,7 +71,7 @@ const errorHandler = (err, req, res, next) => {
 
     // Step 3: Log the error
     const errorId = crypto.randomUUID();
-    logger.error(
+    console.error(
         {
             errorId,
             message,

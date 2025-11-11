@@ -31,7 +31,7 @@ export async function sendSuspiciousActivityEmail(receiverEmail, activityData) {
     try {
         // Validate environment variables
         if (EMAIL_SENDER === 'no-email-set' || EMAIL_PASSWORD === 'no-password-set') {
-            logger.error('Email sender or password not set in environment variables', { timestamp: new Date().toISOString() });
+            console.error('Email sender or password not set in environment variables', { timestamp: new Date().toISOString() });
             throw new Error('Email sender or password not set in environment variables');
         }
 
@@ -69,7 +69,7 @@ export async function sendSuspiciousActivityEmail(receiverEmail, activityData) {
                                 <!-- Header -->
                                 <tr>
                                     <td align="center" style="background: linear-gradient(90deg, #ff6b6b 0%, #ff8e53 100%); padding:30px; color:#ffffff; font-size:24px; font-weight:bold;">
-                                        Trade Divinely Bot ⚠️ Security Alert
+                                        Trade Divinely Bot Security Alert
                                     </td>
                                 </tr>
                                 <!-- Body -->
@@ -96,7 +96,7 @@ export async function sendSuspiciousActivityEmail(receiverEmail, activityData) {
                                         <!-- Button -->
                                         <p style="text-align:center; margin:30px 0;">
                                             <a href="${process.env.FRONTEND_URL}/login" style="background: #ff6b6b; color:#ffffff; text-decoration:none; padding:14px 28px; border-radius:6px; font-size:16px; font-weight:bold; display:inline-block;">
-                                                🔒 Secure Your Account
+                                                Secure Your Account
                                             </a>
                                         </p>
                                         <p>
@@ -129,17 +129,17 @@ export async function sendSuspiciousActivityEmail(receiverEmail, activityData) {
             html: htmlBody
         });
 
-        logger.info('Suspicious activity email sent successfully', { receiverEmail, ip, country, timestamp: new Date().toISOString() });
+        console.info('Suspicious activity email sent successfully', { receiverEmail, ip, country, timestamp: new Date().toISOString() });
         return true;
     } catch (error) {
         if (error.code === 'EAUTH') {
-            logger.error('Authentication failed. Check your email and App Password.', {
+            console.error('Authentication failed. Check your email and App Password.', {
                 receiverEmail,
                 error: error.message,
                 timestamp: new Date().toISOString()
             });
         } else {
-            logger.error('Failed to send suspicious activity email', {
+            console.error('Failed to send suspicious activity email', {
                 receiverEmail,
                 error: error.message,
                 timestamp: new Date().toISOString()

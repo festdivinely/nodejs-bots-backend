@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
-import { logger } from "../logger/logger.js";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
 
 let cached = global.mongoose;
 
@@ -11,21 +14,21 @@ async function connectDb() {
     if (cached.conn) return cached.conn;
 
     if (!cached.promise) {
-        logger.info("Connecting to MongoDB...");
+        console.log("Connecting to MongoDB...");
         cached.promise = mongoose
             .connect(process.env.MONGO_URI, {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
             })
             .then((mongoose) => {
-                logger.info("MongoDB connection established", {
+                console.log("MongoDB connection established", {
                     host: mongoose.connection.host,
                     port: mongoose.connection.port,
                 });
                 return mongoose;
             })
             .catch((err) => {
-                logger.error("MongoDB connection failed", { error: err.message });
+                console.error("MongoDB connection failed:", err.message);
                 throw err;
             });
     }
