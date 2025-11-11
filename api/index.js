@@ -10,24 +10,30 @@ export default async function handler(req, res) {
         try {
             await connectDb();
             isDbConnected = true;
-            console.info("MongoDB connected");
+            console.info("MongoDB connected in Vercel");
         } catch (error) {
             console.error("DB connection failed:", error);
-            return res.status(500).json({ error: "Database unavailable" });
+            return res.status(500).json({ error: "Service unavailable" });
         }
     }
 
-    // PERFECT FIX: Only add /api if request is NOT root AND doesn't already start with /api
-    const originalUrl = req.url || "/";
+    // THE ULTIMATE FIX: Force correct path for ALL requests
+    const path = req.url.split("?")[0]; // Remove query params
 
-    if (originalUrl === "/" || originalUrl === "") {
-        // Root → let Express handle it (your HTML page)
-        req.url = "/";
-    } else if (!originalUrl.startsWith("/api")) {
-        // API route → add /api prefix
-        req.url = `/api${originalUrl}`;
+    // If request is to /api/auth/register but Vercel stripped /api
+    if (path.startsWith("/auth") || path.startsWith("/bots") || path.startsWith("/register") || path.startsWith("/login")) {
+        req.url = `/api${path}`;
     }
-    // If already starts with /api → leave it (e.g. /api/auth)
+    // Root route
+    else if (path === "/" || path === "") {
+        req.url = "/";
+    }
+    // Fallback: add /api to anything that looks like an API call
+    else if (!path.startsWith("/api") && path.includes("/")) {
+        req.url = `/api${path}`;
+    }
+
+    console.info("Vercel → Express URL fix", { original: req.url, fixed: req.url });
 
     app(req, res);
 }
