@@ -1,6 +1,5 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import { logger } from '../logger/logger.js'; // Import Pino logger
 
 // Load environment variables
 dotenv.config();
