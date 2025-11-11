@@ -14,8 +14,14 @@ export default async function handler(req, res) {
         }
     }
 
-    // THIS IS THE ONLY LINE THAT MATTERS
-    req.url = req.url.replace(/^\/(auth|bots|register|login|logout|profile)/, "/api/$1");
+    // PERFECT URL NORMALIZATION
+    if (!req.url.startsWith('/api/') && !req.url.startsWith('/api')) {
+        if (req.url.startsWith('/auth') || req.url.startsWith('/bots')) {
+            req.url = '/api' + req.url;
+        } else if (req.url === '/' || req.url === '') {
+            req.url = '/api';
+        }
+    }
 
     app(req, res);
 }
