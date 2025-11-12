@@ -12,7 +12,21 @@ const app = express();
 console.info("Initializing Express server");
 
 
-app.get("/favicon.ico", (req, res) => res.status(204));
+let isDbConnected = false;
+
+app.use((req, res, next) => {
+    if (!isDbConnected) {
+        try {
+            connectDb();
+            isDbConnected = true;
+        } catch (error) {
+            console.error("Database connection failed:", error);
+            return res.status(500).json({ error: "Database connection failed to connect" });
+        }
+    }
+
+    next()
+})
 
 // DELETED: connectDb middleware — MOVED TO api/index.js
 
@@ -62,22 +76,6 @@ console.info("CORS middleware configured", { origins: corsOrigins });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// API root
-app.get("/api/", (req, res) => {
-    res.json({
-        message: "Trade Divinely Bot API is LIVE",
-        routes: ["/api/auth", "/api/bots"],
-        time: new Date().toISOString()
-    });
-});
-
-
-console.log("Loaded routes:", {
-    hasAuthRoute: !!authRoutes,
-    typeOfAuthRoute: typeof authRoutes,
-    authRouteKeys: authRoutes?.stack?.map(r => r.route?.path || "[middleware]") || "no stack",
-});
 
 // Routes
 app.use("/api/auth", authRoutes);
