@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express from "express"; // Change this line
 import rateLimit from "express-rate-limit";
 import {
     login,
@@ -20,7 +20,7 @@ import {
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
 import requestIp from "request-ip";
 
-const router = Router();
+const router = express.Router(); // And this line
 
 // Route initialization log
 console.info('Initializing auth routes', {
