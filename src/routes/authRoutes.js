@@ -182,7 +182,7 @@ const logRequest = (req, res, next) => {
 };
 
 // === ROUTES ===
-router.post('/register', logRequest, registerLimiter, register);
+router.get('/register', logRequest, registerLimiter, register);
 router.post('/login', logRequest, loginLimiter, login);
 router.post('/verify-device', logRequest, verifyDeviceLimiter, verifyDevice);
 router.post('/resend-verify-device', logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
