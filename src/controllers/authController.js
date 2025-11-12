@@ -111,70 +111,82 @@ const validate = (validations) => [
     },
 ];
 
+// export const register = [
+//     setSecurityHeaders,
+//     validate([
+//         ...usernameValidation,
+//         body('email').isEmail().withMessage('Invalid email format'),
+//         ...passwordValidation,
+//     ]),
+//     asyncHandler(async (req, res) => {
+//         const { username, email, password } = req.body;
+//         const ip = requestIp.getClientIp(req);
+//         const geo = geoip.lookup(ip);
+//         const country = geo ? geo.country : 'unknown';
+//         const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+//         console.info('Register route accessed', {
+//             body: { username, email, password: '[REDACTED]' },
+//             ip,
+//             country,
+//             deviceInfo,
+//             timestamp: new Date().toISOString(),
+//         });
+
+//         try {
+//             const exists = await Users.findOne({ $or: [{ email }, { username }] });
+//             if (exists) {
+//                 console.warn('User already exists', { email, username, ip, country, deviceInfo });
+//                 return res.status(400).json({ message: 'User with this email or username already exists' });
+//             }
+
+//             const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
+//             const user = new Users({
+//                 username,
+//                 email,
+//                 password,
+//                 profileImage,
+//                 isActive: false,
+//             });
+
+//             const token = await user.generateEmailVerifyToken();
+//             await user.save();
+//             console.info('User registered', { email, userId: user._id, ip, country, deviceInfo });
+
+//             const emailSent = await sendVerificationEmail(email, null, token);
+//             if (!emailSent) {
+//                 console.error('Failed to send verification email', { email, ip, country, deviceInfo });
+//                 return res.status(500).json({ message: 'Failed to send verification email' });
+//             }
+
+//             res.status(201).json({ message: 'Verification email sent. Tap the token in the email to copy it and paste it in the app.' });
+//         } catch (error) {
+//             console.error('Registration error', {
+//                 error: error.message,
+//                 stack: error.stack,
+//                 email,
+//                 ip,
+//                 country,
+//                 deviceInfo,
+//                 timestamp: new Date().toISOString(),
+//             });
+//             res.status(500).json({ message: 'Server error during registration' });
+//         }
+//     }),
+// ];
+
 export const register = [
-    res.status(200).json({ message: 'Register POST route is alive' })
-    // setSecurityHeaders,
-    // validate([
-    //     ...usernameValidation,
-    //     body('email').isEmail().withMessage('Invalid email format'),
-    //     ...passwordValidation,
-    // ]),
-    // asyncHandler(async (req, res) => {
-    //     const { username, email, password } = req.body;
-    //     const ip = requestIp.getClientIp(req);
-    //     const geo = geoip.lookup(ip);
-    //     const country = geo ? geo.country : 'unknown';
-    //     const deviceInfo = req.headers['user-agent'] || 'unknown';
-
-    //     console.info('Register route accessed', {
-    //         body: { username, email, password: '[REDACTED]' },
-    //         ip,
-    //         country,
-    //         deviceInfo,
-    //         timestamp: new Date().toISOString(),
-    //     });
-
-    //     try {
-    //         const exists = await Users.findOne({ $or: [{ email }, { username }] });
-    //         if (exists) {
-    //             console.warn('User already exists', { email, username, ip, country, deviceInfo });
-    //             return res.status(400).json({ message: 'User with this email or username already exists' });
-    //         }
-
-    //         const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
-    //         const user = new Users({
-    //             username,
-    //             email,
-    //             password,
-    //             profileImage,
-    //             isActive: false,
-    //         });
-
-    //         const token = await user.generateEmailVerifyToken();
-    //         await user.save();
-    //         console.info('User registered', { email, userId: user._id, ip, country, deviceInfo });
-
-    //         const emailSent = await sendVerificationEmail(email, null, token);
-    //         if (!emailSent) {
-    //             console.error('Failed to send verification email', { email, ip, country, deviceInfo });
-    //             return res.status(500).json({ message: 'Failed to send verification email' });
-    //         }
-
-    //         res.status(201).json({ message: 'Verification email sent. Tap the token in the email to copy it and paste it in the app.' });
-    //     } catch (error) {
-    //         console.error('Registration error', {
-    //             error: error.message,
-    //             stack: error.stack,
-    //             email,
-    //             ip,
-    //             country,
-    //             deviceInfo,
-    //             timestamp: new Date().toISOString(),
-    //         });
-    //         res.status(500).json({ message: 'Server error during registration' });
-    //     }
-    // }),
+    async (req, res) => {
+        res.status(200).json({
+            message: "✅ Register route is alive",
+            method: req.method,
+            timestamp: new Date().toISOString(),
+            url: req.originalUrl,
+            ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+        });
+    },
 ];
+
 
 export const verifyEmail = [
     setSecurityHeaders,
