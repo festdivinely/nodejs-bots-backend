@@ -11,6 +11,9 @@ const app = express();
 
 console.info("Initializing Express server");
 
+
+app.get("/favicon.ico", (req, res) => res.status(204));
+
 // DELETED: connectDb middleware — MOVED TO api/index.js
 
 // Helmet configuration
