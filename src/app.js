@@ -69,6 +69,13 @@ app.get("/api/", (req, res) => {
     });
 });
 
+
+console.log("Loaded routes:", {
+    hasAuthRoute: !!authRoutes,
+    typeOfAuthRoute: typeof authRoutes,
+    authRouteKeys: authRoutes?.stack?.map(r => r.route?.path || "[middleware]") || "no stack",
+});
+
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/bots", botRoutes);
