@@ -1,36 +1,36 @@
+// app.js
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import dotenv from "dotenv";
+
+import connectDb from "./config/mongodb.config.js";
 import authRoutes from "./routes/authRoutes.js";
 import botRoutes from "./routes/botRoutes.js";
 import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
-// REMOVED: connectDb import — NO LONGER NEEDED HERE
+
+dotenv.config();
 
 const app = express();
-
 console.info("Initializing Express server");
 
-
-let isDbConnected = false;
-
-app.use((req, res, next) => {
-    if (!isDbConnected) {
-        try {
-            connectDb();
-            isDbConnected = true;
-        } catch (error) {
-            console.error("Database connection failed:", error);
-            return res.status(500).json({ error: "Database connection failed to connect" });
-        }
+// ==================
+// Connect to MongoDB (once per serverless instance)
+// ==================
+(async () => {
+    try {
+        await connectDb();
+        console.log("✅ Database ready");
+    } catch (err) {
+        console.error("❌ Failed to connect to DB:", err);
+        process.exit(1);
     }
+})();
 
-    next()
-})
-
-// DELETED: connectDb middleware — MOVED TO api/index.js
-
-// Helmet configuration
+// ==================
+// Security Middleware
+// ==================
 const helmetConfig = {
     contentSecurityPolicy: {
         directives: {
@@ -44,22 +44,23 @@ const helmetConfig = {
 
 if (process.env.NODE_ENV === "development") {
     app.use(helmet({ ...helmetConfig, hsts: false }));
-    console.info("Helmet configured without HSTS (development mode)");
 } else {
     app.use(helmet(helmetConfig));
-    console.info("Helmet security middleware configured (production mode)");
 }
 
-// Rate limiting
+// ==================
+// Rate Limiting
+// ==================
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
     message: "Too many requests from this IP, please try again later.",
 });
 app.use("/api/auth", globalLimiter);
-console.info("Rate limiting middleware configured");
 
+// ==================
 // CORS
+// ==================
 const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(",")
     : ["https://quantumrobots.com", "http://127.0.0.1:3000"];
@@ -72,12 +73,16 @@ app.use(
         credentials: true,
     })
 );
-console.info("CORS middleware configured", { origins: corsOrigins });
 
+// ==================
+// Body Parsing
+// ==================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ==================
 // Routes
+// ==================
 app.use("/api/auth", authRoutes);
 app.use("/api/bots", botRoutes);
 
@@ -97,15 +102,14 @@ app.get("/", (req, res) => {
   `);
 });
 
-// Add this to your app.js temporarily
-app.get('/api/debug', (req, res) => {
-    console.log('Debug endpoint hit!');
+// Debug endpoint
+app.get("/api/debug", (req, res) => {
     res.json({
-        message: 'Debug endpoint working',
+        message: "Debug endpoint working",
         timestamp: new Date().toISOString(),
         url: req.url,
         originalUrl: req.originalUrl,
-        method: req.method
+        method: req.method,
     });
 });
 
