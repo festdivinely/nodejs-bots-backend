@@ -2,11 +2,11 @@
   "name": "y",
   "version": "1.0.0",
   "description": "node js backend for bots project",
-  "main": "server.js",
+  "main": "app.js",
   "type": "module",
   "scripts": {
     "dev": "cross-env NODE_ENV=development nodemon src/server.js",
-    "start": "node src/server.js",
+    "start": "node src/app.js",
     "vercel-start": "node src/app.js"
   },
   "dependencies": {

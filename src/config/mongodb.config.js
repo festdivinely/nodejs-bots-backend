@@ -15,8 +15,6 @@ async function connectDb() {
         if (mongoose.connection.readyState === 0) {
             console.log("🔗 Connecting to MongoDB...");
             await mongoose.connect(process.env.MONGO_URI, {
-                useNewUrlParser: true,
-                useUnifiedTopology: true,
                 maxPoolSize: 5, // reasonable limit for serverless
                 connectTimeoutMS: 60000,
                 socketTimeoutMS: 60000,

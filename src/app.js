@@ -13,6 +13,7 @@ import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1);
 console.info("Initializing Express server");
 
 // ==================
