@@ -2,8 +2,8 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import authRoute from "./routes/authRoute.js";
-import botRoute from "./routes/botRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import botRoutes from "./routes/botRoutes.js";
 import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
 // REMOVED: connectDb import — NO LONGER NEEDED HERE
 
@@ -70,8 +70,8 @@ app.get("/api/", (req, res) => {
 });
 
 // Routes
-app.use("/api/auth", authRoute);
-app.use("/api/bots", botRoute);
+app.use("/api/auth", authRoutes);
+app.use("/api/bots", botRoutes);
 
 // Root
 app.get("/", (req, res) => {
