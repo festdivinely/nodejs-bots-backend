@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "node js backend for bots project",
   "main": "app.js",
+  "engines": {
+    "node": ">=18"
+  },
   "type": "module",
   "scripts": {
     "dev": "cross-env NODE_ENV=development nodemon src/server.js",
