@@ -10,18 +10,13 @@ export default async function handler(req, res) {
             await connectDb();
             isDbConnected = true;
         } catch (error) {
-            return res.status(500).json({ error: "DB failed" });
+            console.error("Database connection failed:", error);
+            return res.status(500).json({ error: "Database connection failed" });
         }
     }
 
-    // PERFECT URL NORMALIZATION
-    if (!req.url.startsWith('/api/') && !req.url.startsWith('/api')) {
-        if (req.url.startsWith('/auth') || req.url.startsWith('/bots')) {
-            req.url = '/api' + req.url;
-        } else if (req.url === '/' || req.url === '') {
-            req.url = '/api';
-        }
-    }
+    // Remove the URL rewriting logic - it's causing issues
+    // Let Express handle the routing directly
 
-    app(req, res);
+    return app(req, res);
 }
