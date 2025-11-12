@@ -17,8 +17,10 @@ async function connectDb() {
             await mongoose.connect(process.env.MONGO_URI, {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
-                serverSelectionTimeoutMS: 10000, // 10s to allow Atlas to respond
                 maxPoolSize: 5, // reasonable limit for serverless
+                connectTimeoutMS: 60000,
+                socketTimeoutMS: 60000,
+                serverSelectionTimeoutMS: 60000,
             });
             console.log("✅ MongoDB connected successfully");
         } else {
