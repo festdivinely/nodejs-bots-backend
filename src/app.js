@@ -89,6 +89,18 @@ app.get("/", (req, res) => {
   `);
 });
 
+// Add this to your app.js temporarily
+app.get('/api/debug', (req, res) => {
+    console.log('Debug endpoint hit!');
+    res.json({
+        message: 'Debug endpoint working',
+        timestamp: new Date().toISOString(),
+        url: req.url,
+        originalUrl: req.originalUrl,
+        method: req.method
+    });
+});
+
 // 404
 app.use((req, res, next) => {
     next(new NotFoundError(`Route ${req.originalUrl} not found`));
