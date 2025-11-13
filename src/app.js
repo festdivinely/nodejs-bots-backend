@@ -4,11 +4,53 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
-
 import connectDb from "./config/mongodb.config.js";
-import authRoutes from "./routes/authRoutes.js";
-import botRoutes from "./routes/botRoutes.js";
 import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
+import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
+
+import {
+    registerLimiter,
+    loginLimiter,
+    verifyDeviceLimiter,
+    verifyLimiter,
+    refreshLimiter,
+    logRequest,
+    resendVerifyDeviceLimiter,
+    resendVerifyEmailLimiter,
+    resetLimiter
+} from "./helpers/helperFunctions.js";
+import {
+    login,
+    register,
+    logout,
+    requestPasswordReset,
+    resetPassword,
+    verifyEmail,
+    resendVerifyEmail,
+    resendVerifyDevice,
+    refreshToken,
+    updateProfileImage,
+    updateUsername,
+    getProfile,
+    getAdminDashboard,
+    verifyDevice,
+    verifyResetToken,
+} from "../controllers/authController.js";
+
+import {
+    getAllBots,
+    getUserBots,
+    acquireBot,
+    updateUserBot,
+    startUserBot,
+    stopUserBot,
+    deleteUserBot,
+    updateBotProgress,
+    createBotTemplate,
+    updateBotTemplate,
+} from "../controllers/botControllers.js";
+
+
 
 dotenv.config();
 
@@ -81,37 +123,100 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ==================
-// Routes
-// ==================
-app.use("/api/auth", authRoutes);
-app.use("/api/bots", botRoutes);
 
 // Root
 app.get("/", (req, res) => {
     res.send(`
-    <html>
-      <head><title>Trade Divinely Bot API</title></head>
-      <body style="font-family: Arial, sans-serif; text-align: center; padding: 2rem; background:#000; color:#00ff41;">
+        <html>
+        <head><title>Trade Divinely Bot API</title></head>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding: 2rem; background:#000; color:#00ff41;">
         <h1>TRADE DIVINELY BOT API</h1>
         <p>Serverless backend is <strong>ALIVE</strong>.</p>
         <p><strong>${new Date().toISOString()}</strong></p>
         <hr>
         <p>API: <code>/api/auth/register</code></p>
       </body>
-    </html>
-  `);
+      </html>
+      `);
 });
 
-// Debug endpoint
-app.get("/api/debug", (req, res) => {
-    res.json({
-        message: "Debug endpoint working",
-        timestamp: new Date().toISOString(),
-        url: req.url,
-        originalUrl: req.originalUrl,
-        method: req.method,
-    });
+
+// ==================
+// Routes
+// ==================
+
+// Route initialization log
+console.info('Initializing auth routes', {
+    route: '/api/auth',
+    timestamp: new Date().toISOString()
+});
+
+
+// === ROUTES ===
+app.post('/register', logRequest, registerLimiter, register);
+app.post('/login', logRequest, loginLimiter, login);
+app.post('/verify-device', logRequest, verifyDeviceLimiter, verifyDevice);
+app.post('/resend-verify-device', logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
+app.post('/logout', logRequest, protect, csrfProtect, logout);
+app.post('/request-password-reset', logRequest, resetLimiter, requestPasswordReset);
+app.post('/reset-password/:token', logRequest, resetLimiter, resetPassword);
+app.post('/verify-email', logRequest, verifyLimiter, verifyEmail);
+app.post('/resend-verify-email', logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
+app.post('/refresh-token', logRequest, refreshLimiter, refreshToken);
+app.get('/profile', logRequest, protect, getProfile);
+app.get('/admin', logRequest, protect, requireRole(['admin']), getAdminDashboard);
+app.put('/profile/image', logRequest, protect, csrfProtect, updateProfileImage);
+app.put('/profile/username', logRequest, protect, csrfProtect, updateUsername);
+app.get('/verify-reset-token/:token', logRequest, resetLimiter, verifyResetToken);
+
+// Create bot template (admin only)
+app.post("/", protect, requireRole(["admin"]), (req, res, next) => {
+    createBotTemplate(req, res, next);
+});
+
+// Update bot template (admin only)
+app.patch("/:id", protect, requireRole(["admin"]), (req, res, next) => {
+    updateBotTemplate(req, res, next);
+});
+
+// Get all bots (public route)
+app.get("/", (req, res, next) => {
+    getAllBots(req, res, next);
+});
+
+// Get user bots (requires auth)
+app.get("/user", protect, (req, res, next) => {
+    getUserBots(req, res, next);
+});
+
+// Acquire bot (requires auth)
+app.post("/acquire", protect, (req, res, next) => {
+    acquireBot(req, res, next);
+});
+
+// Update user bot (requires auth)
+app.patch("/:botId", protect, (req, res, next) => {
+    updateUserBot(req, res, next);
+});
+
+// Start user bot (requires auth)
+app.post("/:botId/start", protect, (req, res, next) => {
+    startUserBot(req, res, next);
+});
+
+// Stop user bot (requires auth)
+app.post("/:botId/stop", protect, (req, res, next) => {
+    stopUserBot(req, res, next);
+});
+
+// Delete user bot (requires auth)
+app.delete("/:botId", protect, (req, res, next) => {
+    deleteUserBot(req, res, next);
+});
+
+// Update bot progress (called by Python backend, no auth)
+app.post("/:botId/progress", (req, res, next) => {
+    updateBotProgress(req, res, next);
 });
 
 // 404
