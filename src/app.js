@@ -150,7 +150,20 @@ console.info("Initializing auth routes", {
 // =====================
 // AUTH ROUTES
 // =====================
-app.post("/api/auth/register", logRequest, registerLimiter, register);
+app.post("/api/auth/register", (req, res) => {
+    res.send(`
+        <html>
+        <head><title>register</title></head>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding: 2rem; background:#000; color:#00ff41;">
+        <h1>register</h1>
+        <p>Serverless backend is <strong>ALIVE</strong>.</p>
+        <p><strong>${new Date().toISOString()}</strong></p>
+        <hr>
+        <p>API: <code>/api/auth/register</code></p>
+      </body>
+      </html>
+      `);
+});
 app.post("/api/auth/login", logRequest, loginLimiter, login);
 app.post("/api/auth/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
 app.post("/api/auth/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
