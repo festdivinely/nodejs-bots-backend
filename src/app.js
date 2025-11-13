@@ -147,46 +147,38 @@ console.info("Initializing auth routes", {
 });
 
 // routes/allRoutes.js
-const authRouter = express.Router();
-const botRouter = express.Router();
-
 // =====================
 // AUTH ROUTES
 // =====================
-authRouter.post("/register", logRequest, registerLimiter, register);
-authRouter.post("/login", logRequest, loginLimiter, login);
-authRouter.post("/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
-authRouter.post("/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
-authRouter.post("/logout", logRequest, protect, csrfProtect, logout);
-authRouter.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
-authRouter.post("/reset-password/:token", logRequest, resetLimiter, resetPassword);
-authRouter.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
-authRouter.post("/resend-verify-email", logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
-authRouter.post("/refresh-token", logRequest, refreshLimiter, refreshToken);
-authRouter.get("/profile", logRequest, protect, getProfile);
-authRouter.get("/admin", logRequest, protect, requireRole(["admin"]), getAdminDashboard);
-authRouter.put("/profile/image", logRequest, protect, csrfProtect, updateProfileImage);
-authRouter.put("/profile/username", logRequest, protect, csrfProtect, updateUsername);
-authRouter.get("/verify-reset-token/:token", logRequest, resetLimiter, verifyResetToken);
+app.post("/api/auth/register", logRequest, registerLimiter, register);
+app.post("/api/auth/login", logRequest, loginLimiter, login);
+app.post("/api/auth/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
+app.post("/api/auth/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
+app.post("/api/auth/logout", logRequest, protect, csrfProtect, logout);
+app.post("/api/auth/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
+app.post("/api/auth/reset-password/:token", logRequest, resetLimiter, resetPassword);
+app.post("/api/auth/verify-email", logRequest, verifyLimiter, verifyEmail);
+app.post("/api/auth/resend-verify-email", logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
+app.post("/api/auth/refresh-token", logRequest, refreshLimiter, refreshToken);
+app.get("/api/auth/profile", logRequest, protect, getProfile);
+app.get("/api/auth/admin", logRequest, protect, requireRole(["admin"]), getAdminDashboard);
+app.put("/api/auth/profile/image", logRequest, protect, csrfProtect, updateProfileImage);
+app.put("/api/auth/profile/username", logRequest, protect, csrfProtect, updateUsername);
+app.get("/api/auth/verify-reset-token/:token", logRequest, resetLimiter, verifyResetToken);
 
 // =====================
 // BOT ROUTES
 // =====================
-botRouter.post("/", protect, requireRole(["admin"]), createBotTemplate);
-botRouter.patch("/:id", protect, requireRole(["admin"]), updateBotTemplate);
-botRouter.get("/", getAllBots);
-botRouter.get("/user", protect, getUserBots);
-botRouter.post("/acquire", protect, acquireBot);
-botRouter.patch("/:botId", protect, updateUserBot);
-botRouter.post("/:botId/start", protect, startUserBot);
-botRouter.post("/:botId/stop", protect, stopUserBot);
-botRouter.delete("/:botId", protect, deleteUserBot);
-botRouter.post("/:botId/progress", updateBotProgress);
-
-
-app.use("/api/auth", authRouter);
-app.use("/api/bots", botRouter);
-
+app.post("/api/bot/", protect, requireRole(["admin"]), createBotTemplate);
+app.patch("/api/bot/:id", protect, requireRole(["admin"]), updateBotTemplate);
+app.get("/api/bot/", getAllBots);
+app.get("/api/bot/user", protect, getUserBots);
+app.post("/api/bot/acquire", protect, acquireBot);
+app.patch("/api/bot/:botId", protect, updateUserBot);
+app.post("/api/bot/:botId/start", protect, startUserBot);
+app.post("/api/bot/:botId/stop", protect, stopUserBot);
+app.delete("/api/bot/:botId", protect, deleteUserBot);
+app.post("/api/bot/:botId/progress", updateBotProgress);
 
 // 404
 app.use((req, res, next) => {
