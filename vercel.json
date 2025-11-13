@@ -1,7 +1,7 @@
 {
     "version": 2,
     "functions": {
-        "app.js": {
+        "src/app.js": {
             "memory": 1024,
             "maxDuration": 10
         }
@@ -9,7 +9,7 @@
     "routes": [
         {
             "src": "/(.*)",
-            "dest": "/app.js"
+            "dest": "src/app.js"
         }
     ]
 }

@@ -5,7 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import connectDb from "./config/mongodb.config.js";
-import errorHandler, { NotFoundError } from "./middleware/errorHandler.js";
+import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
 import { protect, requireRole, csrfProtect } from "./middleware/authMiddleware.js";
 
 import {
