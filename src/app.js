@@ -150,7 +150,7 @@ console.info("Initializing auth routes", {
 // =====================
 // AUTH ROUTES
 // =====================
-app.get("/api/auth/register", logRequest, registerLimiter, register);
+app.get("/api/auth/register", console.log("Register route hit"));
 app.post("/api/auth/login", logRequest, loginLimiter, login);
 app.post("/api/auth/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
 app.post("/api/auth/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
