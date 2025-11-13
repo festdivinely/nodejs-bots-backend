@@ -181,17 +181,6 @@ const logRequest = (req, res, next) => {
     next();
 };
 
-// Debug endpoint
-router.get("/api/debug", (req, res) => {
-    res.json({
-        message: "Debug endpoint working",
-        timestamp: new Date().toISOString(),
-        url: req.url,
-        originalUrl: req.originalUrl,
-        method: req.method,
-    });
-});
-
 // === ROUTES ===
 router.post('/register', logRequest, registerLimiter, register);
 router.post('/login', logRequest, loginLimiter, login);
