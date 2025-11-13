@@ -1,3 +1,6 @@
+import rateLimit from "express-rate-limit";
+import requestIp from "request-ip";
+
 // === RATE LIMITERS ===
 export const registerLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
