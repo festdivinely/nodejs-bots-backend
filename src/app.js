@@ -150,7 +150,9 @@ console.info("Initializing auth routes", {
 // =====================
 // AUTH ROUTES
 // =====================
-app.get("/api/auth/register", console.log("Register route hit"));
+app.post("/api/auth/register", (req, res) => {
+    res.status(200).json({ message: "Register endpoint is working." });
+});
 app.post("/api/auth/login", logRequest, loginLimiter, login);
 app.post("/api/auth/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
 app.post("/api/auth/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
