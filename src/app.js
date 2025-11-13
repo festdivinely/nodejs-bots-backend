@@ -150,7 +150,7 @@ console.info("Initializing auth routes", {
 // =====================
 // AUTH ROUTES
 // =====================
-app.post("/api/auth/register", (req, res) => {
+app.get("/api/auth/register", (req, res) => {
     res.send(`
         <html>
         <head><title>register</title></head>
