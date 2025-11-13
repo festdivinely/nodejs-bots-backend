@@ -103,17 +103,6 @@ app.get("/", (req, res) => {
   `);
 });
 
-// Debug endpoint
-app.get("/api/debug", (req, res) => {
-    res.json({
-        message: "Debug endpoint working",
-        timestamp: new Date().toISOString(),
-        url: req.url,
-        originalUrl: req.originalUrl,
-        method: req.method,
-    });
-});
-
 // 404
 app.use((req, res, next) => {
     next(new NotFoundError(`Route ${req.originalUrl} not found`));
