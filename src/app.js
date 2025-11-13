@@ -146,74 +146,47 @@ console.info("Initializing auth routes", {
     timestamp: new Date().toISOString(),
 });
 
-// === AUTH ROUTES ===
-app.post("/register", logRequest, registerLimiter, register);
-app.post("/login", logRequest, loginLimiter, login);
-app.post("/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
-app.post("/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
-app.post("/logout", logRequest, protect, csrfProtect, logout);
-app.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
-app.post("/reset-password/:token", logRequest, resetLimiter, resetPassword);
-app.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
-app.post("/resend-verify-email", logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
-app.post("/refresh-token", logRequest, refreshLimiter, refreshToken);
-app.get("/profile", logRequest, protect, getProfile);
-app.get("/admin", logRequest, protect, requireRole(["admin"]), getAdminDashboard);
-app.put("/profile/image", logRequest, protect, csrfProtect, updateProfileImage);
-app.put("/profile/username", logRequest, protect, csrfProtect, updateUsername);
-app.get("/verify-reset-token/:token", logRequest, resetLimiter, verifyResetToken);
+// routes/allRoutes.js
+const authRouter = express.Router();
+const botRouter = express.Router();
 
-// === BOT ROUTES ===
+// =====================
+// AUTH ROUTES
+// =====================
+authRouter.post("/register", logRequest, registerLimiter, register);
+authRouter.post("/login", logRequest, loginLimiter, login);
+authRouter.post("/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
+authRouter.post("/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
+authRouter.post("/logout", logRequest, protect, csrfProtect, logout);
+authRouter.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
+authRouter.post("/reset-password/:token", logRequest, resetLimiter, resetPassword);
+authRouter.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
+authRouter.post("/resend-verify-email", logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
+authRouter.post("/refresh-token", logRequest, refreshLimiter, refreshToken);
+authRouter.get("/profile", logRequest, protect, getProfile);
+authRouter.get("/admin", logRequest, protect, requireRole(["admin"]), getAdminDashboard);
+authRouter.put("/profile/image", logRequest, protect, csrfProtect, updateProfileImage);
+authRouter.put("/profile/username", logRequest, protect, csrfProtect, updateUsername);
+authRouter.get("/verify-reset-token/:token", logRequest, resetLimiter, verifyResetToken);
 
-// Create bot template (admin only)
-app.post("/", protect, requireRole(["admin"]), (req, res, next) => {
-    createBotTemplate(req, res, next);
-});
+// =====================
+// BOT ROUTES
+// =====================
+botRouter.post("/", protect, requireRole(["admin"]), createBotTemplate);
+botRouter.patch("/:id", protect, requireRole(["admin"]), updateBotTemplate);
+botRouter.get("/", getAllBots);
+botRouter.get("/user", protect, getUserBots);
+botRouter.post("/acquire", protect, acquireBot);
+botRouter.patch("/:botId", protect, updateUserBot);
+botRouter.post("/:botId/start", protect, startUserBot);
+botRouter.post("/:botId/stop", protect, stopUserBot);
+botRouter.delete("/:botId", protect, deleteUserBot);
+botRouter.post("/:botId/progress", updateBotProgress);
 
-// Update bot template (admin only)
-app.patch("/:id", protect, requireRole(["admin"]), (req, res, next) => {
-    updateBotTemplate(req, res, next);
-});
 
-// Get all bots (public route)
-app.get("/", (req, res, next) => {
-    getAllBots(req, res, next);
-});
+app.use("/api/auth", authRouter);
+app.use("/api/bots", botRouter);
 
-// Get user bots (requires auth)
-app.get("/user", protect, (req, res, next) => {
-    getUserBots(req, res, next);
-});
-
-// Acquire bot (requires auth)
-app.post("/acquire", protect, (req, res, next) => {
-    acquireBot(req, res, next);
-});
-
-// Update user bot (requires auth)
-app.patch("/:botId", protect, (req, res, next) => {
-    updateUserBot(req, res, next);
-});
-
-// Start user bot (requires auth)
-app.post("/:botId/start", protect, (req, res, next) => {
-    startUserBot(req, res, next);
-});
-
-// Stop user bot (requires auth)
-app.post("/:botId/stop", protect, (req, res, next) => {
-    stopUserBot(req, res, next);
-});
-
-// Delete user bot (requires auth)
-app.delete("/:botId", protect, (req, res, next) => {
-    deleteUserBot(req, res, next);
-});
-
-// Update bot progress (called by Python backend, no auth)
-app.post("/:botId/progress", (req, res, next) => {
-    updateBotProgress(req, res, next);
-});
 
 // 404
 app.use((req, res, next) => {
