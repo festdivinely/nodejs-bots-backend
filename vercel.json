@@ -1,11 +1,11 @@
 {
     "version": 2,
-    "functions": {
-        "src/app.js": {
-            "memory": 1024,
-            "maxDuration": 10
+    "builds": [
+        {
+            "src": "src/app.js",
+            "use": "@vercel/node"
         }
-    },
+    ],
     "routes": [
         {
             "src": "/(.*)",
