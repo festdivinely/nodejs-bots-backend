@@ -2,12 +2,7 @@
     "version": 2,
     "functions": {
         "app.js": {
-            "includeFiles": [
-                "routes/**",
-                "config/**",
-                "middleware/**",
-                "utility/**"
-            ],
+            "includeFiles": "{routes/**,config/**,middleware/**,utility/**}",
             "memory": 1024,
             "maxDuration": 10
         }
