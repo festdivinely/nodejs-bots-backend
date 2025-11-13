@@ -5,8 +5,8 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import connectDb from "./config/mongodb.config.js";
-import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
-import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
+import errorHandler, { NotFoundError } from "./middleware/errorHandler.js";
+import { protect, requireRole, csrfProtect } from "./middleware/authMiddleware.js";
 
 import {
     registerLimiter,
@@ -19,6 +19,7 @@ import {
     resendVerifyEmailLimiter,
     resetLimiter
 } from "./helpers/helperFunctions.js";
+
 import {
     login,
     register,
@@ -35,7 +36,7 @@ import {
     getAdminDashboard,
     verifyDevice,
     verifyResetToken,
-} from "../controllers/authController.js";
+} from "./controllers/authController.js";
 
 import {
     getAllBots,
@@ -48,14 +49,12 @@ import {
     updateBotProgress,
     createBotTemplate,
     updateBotTemplate,
-} from "../controllers/botControllers.js";
-
-
+} from "./controllers/botControllers.js";
 
 dotenv.config();
 
 const app = express();
-app.set('trust proxy', 1);
+app.set("trust proxy", 1);
 console.info("Initializing Express server");
 
 // ==================
@@ -123,7 +122,6 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-
 // Root
 app.get("/", (req, res) => {
     res.send(`
@@ -140,34 +138,32 @@ app.get("/", (req, res) => {
       `);
 });
 
-
 // ==================
 // Routes
 // ==================
-
-// Route initialization log
-console.info('Initializing auth routes', {
-    route: '/api/auth',
-    timestamp: new Date().toISOString()
+console.info("Initializing auth routes", {
+    route: "/api/auth",
+    timestamp: new Date().toISOString(),
 });
 
+// === AUTH ROUTES ===
+app.post("/register", logRequest, registerLimiter, register);
+app.post("/login", logRequest, loginLimiter, login);
+app.post("/verify-device", logRequest, verifyDeviceLimiter, verifyDevice);
+app.post("/resend-verify-device", logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
+app.post("/logout", logRequest, protect, csrfProtect, logout);
+app.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
+app.post("/reset-password/:token", logRequest, resetLimiter, resetPassword);
+app.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
+app.post("/resend-verify-email", logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
+app.post("/refresh-token", logRequest, refreshLimiter, refreshToken);
+app.get("/profile", logRequest, protect, getProfile);
+app.get("/admin", logRequest, protect, requireRole(["admin"]), getAdminDashboard);
+app.put("/profile/image", logRequest, protect, csrfProtect, updateProfileImage);
+app.put("/profile/username", logRequest, protect, csrfProtect, updateUsername);
+app.get("/verify-reset-token/:token", logRequest, resetLimiter, verifyResetToken);
 
-// === ROUTES ===
-app.post('/register', logRequest, registerLimiter, register);
-app.post('/login', logRequest, loginLimiter, login);
-app.post('/verify-device', logRequest, verifyDeviceLimiter, verifyDevice);
-app.post('/resend-verify-device', logRequest, resendVerifyDeviceLimiter, resendVerifyDevice);
-app.post('/logout', logRequest, protect, csrfProtect, logout);
-app.post('/request-password-reset', logRequest, resetLimiter, requestPasswordReset);
-app.post('/reset-password/:token', logRequest, resetLimiter, resetPassword);
-app.post('/verify-email', logRequest, verifyLimiter, verifyEmail);
-app.post('/resend-verify-email', logRequest, resendVerifyEmailLimiter, resendVerifyEmail);
-app.post('/refresh-token', logRequest, refreshLimiter, refreshToken);
-app.get('/profile', logRequest, protect, getProfile);
-app.get('/admin', logRequest, protect, requireRole(['admin']), getAdminDashboard);
-app.put('/profile/image', logRequest, protect, csrfProtect, updateProfileImage);
-app.put('/profile/username', logRequest, protect, csrfProtect, updateUsername);
-app.get('/verify-reset-token/:token', logRequest, resetLimiter, verifyResetToken);
+// === BOT ROUTES ===
 
 // Create bot template (admin only)
 app.post("/", protect, requireRole(["admin"]), (req, res, next) => {
