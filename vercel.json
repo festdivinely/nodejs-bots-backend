@@ -1,18 +1,20 @@
 {
+    "$schema": "https://openapi.vercel.sh/vercel.json",
     "version": 2,
     "functions": {
         "api/**/*.js": {
-            "runtime": "@vercel/node@latest"
+            "runtime": "@vercel/node@latest",
+            "maxDuration": 30
         }
     },
-    "routes": [
+    "rewrites": [
         {
-            "src": "/api/(.*)",
-            "dest": "/api/$1"
+            "source": "/api/:path*",
+            "destination": "/api/:path*"
         },
         {
-            "src": "/",
-            "dest": "/api/index.js"
+            "source": "/",
+            "destination": "/api/index.js"
         }
     ]
 }
