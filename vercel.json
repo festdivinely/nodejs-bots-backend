@@ -1,18 +1,18 @@
 {
-    "builds": [
-        {
-            "src": "api/**/*.js",
-            "use": "@now/node"
+    "version": 2,
+    "functions": {
+        "api/**/*.js": {
+            "runtime": "@vercel/node@latest"
         }
-    ],
+    },
     "routes": [
         {
             "src": "/api/(.*)",
-            "dest": "api/$1.js"
+            "dest": "/api/$1"
         },
         {
             "src": "/",
-            "dest": "api/index.js"
+            "dest": "/api/index.js"
         }
     ]
 }
