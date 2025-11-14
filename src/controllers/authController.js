@@ -233,6 +233,7 @@ export const resendVerifyEmail = [
         body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
     ]),
     asyncHandler(async (req, res) => {
+        const db = await getDb(); // ← ADDED
         const { usernameOrEmail } = req.body;
         const ip = requestIp.getClientIp(req);
         const geo = geoip.lookup(ip);
