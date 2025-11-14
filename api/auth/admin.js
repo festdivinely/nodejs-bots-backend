@@ -2,7 +2,7 @@ import { getAdminDashboard } from "../../controllers/authController.js";
 import { logRequest } from "../../helpers/helperFunctions.js";
 import { protect, requireRole } from "../../middleware/authMiddleware.js";
 import { applyMiddleware } from "../../middleware/applyMiddleware.js";
-import { getDb } from "../../utils/getDb.js";
+import { getDb } from "../../src/utils/getDb.js";
 
 export default async function handler(req, res) {
     if (req.method !== "GET") return res.status(405).json({ message: "Method Not Allowed" });

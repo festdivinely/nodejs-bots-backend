@@ -1,13 +1,21 @@
-import { stopUserBot } from "../../controllers/botControllers.js";
+// src/api/bot/stop.js
+import { stopUserBot } from "../../controllers/botController.js";
 import { protect } from "../../middleware/authMiddleware.js";
 import { applyMiddleware } from "../../middleware/applyMiddleware.js";
-import { getDb } from "../../utils/getDb.js";
+import { getDb } from "../../src/utils/getDb.js";
 
 export default async function handler(req, res) {
     if (req.method !== "POST") return res.status(405).json({ message: "Method Not Allowed" });
-    await getDb();
-    req.params = { botId: req.query.botId };
-    try { await applyMiddleware(protect)(req, res); }
-    catch { return res.status(401).json({ message: "Unauthorized" }); }
-    return stopUserBot(req, res);
+
+    const db = await getDb();
+    const client = await (await import("../../config/db.js")).default;
+    req.db = db;
+    req.client = client;
+
+    try {
+        await applyMiddleware(protect)(req, res);
+        return stopUserBot(req, res);
+    } catch {
+        return res.status(401).json({ message: "Unauthorized" });
+    }
 }
