@@ -1,4 +1,3 @@
-// api/index.js
 export default function handler(req, res) {
     res.status(200).json({
         message: "Trade Divinely Bot API is LIVE",
@@ -6,7 +5,7 @@ export default function handler(req, res) {
         docs: "https://quantumrobots.com/api-docs",
         routes: {
             auth: [
-                "GET    /api/auth/register",
+                "POST   /api/auth/register",
                 "POST   /api/auth/login",
                 "POST   /api/auth/logout",
                 "POST   /api/auth/request-password-reset",
@@ -17,7 +16,7 @@ export default function handler(req, res) {
                 "GET    /api/auth/profile",
                 "GET    /api/auth/admin",
                 "GET    /api/auth/verify-reset-token/:token"
-            ],
+            ]
         }
     });
 }
