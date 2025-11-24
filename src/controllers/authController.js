@@ -6,10 +6,6 @@ import dotenv from "dotenv";
 import asyncHandler from "express-async-handler";
 import { sanitizeUser } from "../utility/sanitizeUser.js";
 import cloudinary from "../config/cloudinarydb.js";
-import { sendVerificationEmail } from "../utility/email.js";
-import { sendPasswordResetEmail } from "../utility/passwordResetEmail.js";
-import { sendSuspiciousActivityEmail } from "../utility/suspiciousEmail.js";
-import { sendDeviceVerificationEmail } from "../utility/deviceVerifyEmail.js";
 import requestIp from "request-ip";
 import geoip from "geoip-lite";
 import Redis from "ioredis";
@@ -24,6 +20,7 @@ const AUDIENCE = process.env.AUDIENCE || 'api.quantumrobots.com';
 const privateKey = Buffer.from(process.env.PRIVATE_KEY, 'base64').toString('utf-8');
 const publicKey = Buffer.from(process.env.PUBLIC_KEY, 'base64').toString('utf-8');
 const DEV_MODE = process.env.DEV_MODE === 'true';
+const EMAIL_SERVICE_DOMAIN = process.env.EMAIL_SERVICE_DOMAIN || 'https://choir-song-project-typing-1e66.vercel.app';
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null;
 
 if (!privateKey || !publicKey) {
@@ -111,22 +108,52 @@ const validate = (validations) => [
     },
 ];
 
+// Helper function to get client info
+const getClientInfo = (req) => {
+    const ip = requestIp.getClientIp(req);
+    const geo = geoip.lookup(ip);
+    const country = geo ? geo.country : 'unknown';
+    const deviceInfo = req.headers['user-agent'] || 'unknown';
+
+    return { ip, country, deviceInfo };
+};
+
+// Send email data to external service
+const sendEmailData = async (emailType, to, data) => {
+    try {
+        const response = await fetch(`${EMAIL_SERVICE_DOMAIN}/api/send-email`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                type: emailType,
+                to: to,
+                data: data
+            })
+        });
+
+        return response.ok;
+    } catch (error) {
+        console.error('Email service error:', error.message);
+        return false;
+    }
+};
+
 export const register = [
     setSecurityHeaders,
     validate([
         ...usernameValidation,
         body('email').isEmail().withMessage('Invalid email format'),
         ...passwordValidation,
+        body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
     ]),
     asyncHandler(async (req, res) => {
-        const { username, email, password } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { username, email, password, fingerprint } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Register route accessed', {
-            body: { username, email, password: '[REDACTED]' },
+            body: { username, email, password: '[REDACTED]', fingerprint },
             ip,
             country,
             deviceInfo,
@@ -134,13 +161,51 @@ export const register = [
         });
 
         try {
-            const exists = await Users.findOne({ $or: [{ email }, { username }] });
-            if (exists) {
-                console.warn('User already exists', { email, username, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'User with this email or username already exists' });
+            const existingUser = await Users.findOne({ $or: [{ email }, { username }] });
+
+            // User exists but is NOT verified - resend verification code
+            if (existingUser && !existingUser.isActive) {
+                console.info('Unverified user attempting to register again', { email, username, ip, country, deviceInfo });
+
+                // Generate new verification code
+                const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+                existingUser.emailVerifyToken = verificationCode;
+                existingUser.emailVerifyExpires = new Date(Date.now() + 15 * 60 * 1000);
+                await existingUser.save();
+
+                // Send verification email
+                const emailSent = await sendEmailData('email_verification', email, {
+                    username: existingUser.username,
+                    verificationCode: verificationCode,
+                    supportEmail: 'support@quantumrobots.com'
+                });
+
+                if (!emailSent) {
+                    console.error('Failed to resend verification email', { email, ip, country, deviceInfo });
+                    return res.status(500).json({ message: 'Failed to send verification email' });
+                }
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Verification code resent to your email.',
+                    requiresEmailVerification: true,
+                    email: email
+                });
             }
 
+            // User exists and IS verified - cannot register again
+            if (existingUser) {
+                console.warn('Verified user already exists', { email, username, ip, country, deviceInfo });
+                return res.status(400).json({
+                    success: false,
+                    message: 'User with this email or username already exists',
+                    action: 'login'
+                });
+            }
+
+            // New user - create account
             const profileImage = `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`;
+
             const user = new Users({
                 username,
                 email,
@@ -149,17 +214,43 @@ export const register = [
                 isActive: false,
             });
 
-            const token = await user.generateEmailVerifyToken();
-            await user.save();
-            console.info('User registered', { email, userId: user._id, ip, country, deviceInfo });
+            const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+            user.emailVerifyToken = verificationCode;
+            user.emailVerifyExpires = new Date(Date.now() + 15 * 60 * 1000);
 
-            const emailSent = await sendVerificationEmail(email, null, token);
+            user.devices.push({
+                fingerprint: fingerprint,
+                status: 'NOT CONFIRMED',
+                deviceInfo: deviceInfo,
+                ip: ip,
+                country: country,
+                createdAt: new Date(),
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+            });
+
+            await user.save();
+
+            // Send verification email
+            const emailSent = await sendEmailData('email_verification', email, {
+                username: username,
+                verificationCode: verificationCode,
+                supportEmail: 'support@quantumrobots.com'
+            });
+
             if (!emailSent) {
-                console.error('Failed to send verification email', { email, ip, country, deviceInfo });
-                return res.status(500).json({ message: 'Failed to send verification email' });
+                console.error('Failed to send verification email via external service', { email, ip, country, deviceInfo });
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to send verification email'
+                });
             }
 
-            res.status(201).json({ message: 'Verification email sent. Tap the token in the email to copy it and paste it in the app.' });
+            res.status(201).json({
+                success: true,
+                message: 'Verification code sent to your email.',
+                requiresEmailVerification: true,
+                email: email
+            });
         } catch (error) {
             console.error('Registration error', {
                 error: error.message,
@@ -170,7 +261,10 @@ export const register = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            res.status(500).json({ message: 'Server error during registration' });
+            res.status(500).json({
+                success: false,
+                message: 'Server error during registration'
+            });
         }
     }),
 ];
@@ -178,17 +272,14 @@ export const register = [
 export const verifyEmail = [
     setSecurityHeaders,
     validate([
-        body('token').notEmpty().withMessage('Verification token is required'),
+        body('code').notEmpty().withMessage('Verification code is required'),
     ]),
     asyncHandler(async (req, res) => {
-        const { token } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { code } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Verify email route accessed', {
-            body: { token: '[REDACTED]' },
+            body: { code: '[REDACTED]' },
             ip,
             country,
             deviceInfo,
@@ -196,23 +287,60 @@ export const verifyEmail = [
         });
 
         try {
+            if (!code) {
+                console.warn('No verification code provided', { ip, country, deviceInfo });
+                return res.status(400).json({
+                    message: 'Verification code is required'
+                });
+            }
+
+            // Find user by verification code
             const user = await Users.findOne({
-                emailVerifyToken: token,
+                emailVerifyToken: code,
                 emailVerifyExpires: { $gt: Date.now() },
             });
 
             if (!user) {
-                console.warn('Invalid or expired verification token', { ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Invalid or expired verification token' });
+                console.warn('Invalid or expired verification code', {
+                    ip, country, deviceInfo
+                });
+
+                // Cleanup failed verification
+                const expiredUser = await Users.findOne({ emailVerifyToken: code });
+                if (expiredUser && !expiredUser.isActive) {
+                    await Users.deleteOne({ _id: expiredUser._id });
+                }
+
+                return res.status(400).json({
+                    message: 'Invalid or expired verification code'
+                });
             }
+
+            // Update device status and user activation
+            user.devices = user.devices.map(device => ({
+                ...device.toObject(),
+                status: 'YES IT ME',
+                verifiedAt: new Date(),
+                expiresAt: undefined
+            }));
 
             user.emailVerifyToken = undefined;
             user.emailVerifyExpires = undefined;
             user.isActive = true;
             await user.save();
 
-            console.info('Email verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
-            res.status(200).json({ message: 'Email verified successfully! You can now log in.' });
+            console.info('Email verified and device confirmed', {
+                userId: user._id,
+                email: user.email,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            res.status(200).json({
+                message: 'Email verified successfully! You can now log in.',
+                verified: true
+            });
         } catch (error) {
             console.error('Email verification error', {
                 error: error.message,
@@ -222,141 +350,18 @@ export const verifyEmail = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
+
+            // Clean up on error
+            try {
+                const user = await Users.findOne({ emailVerifyToken: code });
+                if (user && !user.isActive) {
+                    await Users.deleteOne({ _id: user._id });
+                }
+            } catch (cleanupError) {
+                console.error('Cleanup failed during verification error:', cleanupError.message);
+            }
+
             res.status(500).json({ message: 'Server error during email verification' });
-        }
-    }),
-];
-
-export const resendVerifyEmail = [
-    setSecurityHeaders,
-    validate([
-        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
-    ]),
-    asyncHandler(async (req, res) => {
-        const db = await getDb(); // ← ADDED
-        const { usernameOrEmail } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
-
-        console.info('Resend verify email route accessed', {
-            body: { usernameOrEmail },
-            ip,
-            country,
-            deviceInfo,
-            timestamp: new Date().toISOString(),
-        });
-
-        try {
-            const user = await Users.findOne({
-                $or: [
-                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                ],
-            });
-
-            if (!user) {
-                console.warn('User not found for resend verification email', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(404).json({ message: 'User not found' });
-            }
-
-            if (user.isActive) {
-                console.warn('Email already verified', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Email already verified' });
-            }
-
-            const token = await user.generateEmailVerifyToken();
-            await user.save();
-
-            const emailSent = await sendVerificationEmail(user.email, null, token);
-            if (!emailSent) {
-                console.error('Failed to send verification email', { email: user.email, ip, country, deviceInfo });
-                return res.status(500).json({ message: 'Failed to send verification email' });
-            }
-
-            console.info('Verification email resent', { userId: user._id, email: user.email, ip, country, deviceInfo });
-            res.status(200).json({ message: 'Verification email resent successfully' });
-        } catch (error) {
-            console.error('Resend verification email error', {
-                error: error.message,
-                stack: error.stack,
-                usernameOrEmail,
-                ip,
-                country,
-                deviceInfo,
-                timestamp: new Date().toISOString(),
-            });
-            res.status(500).json({ message: 'Server error during resend verification email' });
-        }
-    }),
-];
-
-export const resendVerifyDevice = [
-    setSecurityHeaders,
-    validate([
-        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
-        body('fingerprint').notEmpty().withMessage('Device fingerprint is required'),
-    ]),
-    asyncHandler(async (req, res) => {
-        const { usernameOrEmail, fingerprint } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
-
-        console.info('Resend verify device route accessed', {
-            body: { usernameOrEmail, fingerprint },
-            ip,
-            country,
-            deviceInfo,
-            timestamp: new Date().toISOString(),
-        });
-
-        try {
-            const user = await Users.findOne({
-                $or: [
-                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                ],
-            });
-
-            if (!user) {
-                console.warn('User not found for resend device verification', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(404).json({ message: 'User not found' });
-            }
-
-            if (!user.isActive) {
-                console.warn('Email not verified for resend device verification', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Please verify your email first' });
-            }
-
-            user.deviceVerifyToken = undefined;
-            user.deviceVerifyExpires = undefined;
-            user.deviceVerifyFingerprint = undefined;
-
-            const otp = await user.generateDeviceVerifyToken(fingerprint);
-            await user.save();
-
-            const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
-            if (!emailSent) {
-                console.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
-                return res.status(500).json({ message: 'Failed to send device verification email' });
-            }
-
-            console.info('Device verification OTP resent', { userId: user._id, email: user.email, ip, country, deviceInfo });
-            res.status(200).json({ message: 'Device verification OTP resent successfully' });
-        } catch (error) {
-            console.error('Resend device verification error', {
-                error: error.message,
-                stack: error.stack,
-                usernameOrEmail,
-                ip,
-                country,
-                deviceInfo,
-                timestamp: new Date().toISOString(),
-            });
-            res.status(500).json({ message: 'Server error during resend device verification' });
         }
     }),
 ];
@@ -371,10 +376,7 @@ export const login = [
     ]),
     asyncHandler(async (req, res) => {
         const { usernameOrEmail, password, fingerprint, totp } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Login route accessed', {
             body: { usernameOrEmail, fingerprint, totp: totp ? '[REDACTED]' : undefined, password: password ? '[REDACTED]' : undefined },
@@ -392,32 +394,65 @@ export const login = [
                 ],
             });
 
+            // User doesn't exist - should sign up first
             if (!user) {
-                console.warn('Invalid login attempt', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Invalid credentials' });
+                console.warn('User not found', { usernameOrEmail, ip, country, deviceInfo });
+                return res.status(400).json({
+                    success: false,
+                    message: 'Account not found. Please sign up first.',
+                    action: 'signup'
+                });
             }
 
+            // User exists but email not verified - resend verification code
             if (!user.isActive) {
                 console.warn('Email not verified', { usernameOrEmail, ip, country, deviceInfo });
-                const token = await user.generateEmailVerifyToken();
+
+                const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+                user.emailVerifyToken = verificationCode;
+                user.emailVerifyExpires = new Date(Date.now() + 15 * 60 * 1000);
                 await user.save();
-                const emailSent = await sendVerificationEmail(user.email, null, token);
+
+                const emailSent = await sendEmailData('email_verification', user.email, {
+                    username: user.username,
+                    verificationCode: verificationCode,
+                    supportEmail: 'support@quantumrobots.com'
+                });
+
                 if (!emailSent) {
                     console.error('Failed to send verification email during login', { email: user.email, ip, country, deviceInfo });
-                    return res.status(500).json({ message: 'Failed to send verification email' });
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to send verification email'
+                    });
                 }
-                return res.status(400).json({ message: 'Please verify your email to continue', requiresEmailVerification: true });
+
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please verify your email to continue.',
+                    requiresEmailVerification: true,
+                    email: user.email
+                });
             }
 
+            // Check password for verified user
             if (password && !(await user.verifyPassword(password))) {
                 console.warn('Invalid password', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Invalid credentials' });
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid credentials'
+                });
             }
 
+            // Handle 2FA if enabled
             if (user.twoFactorEnabled && !DEV_MODE) {
                 if (!totp) {
                     console.warn('TOTP required', { userId: user._id, ip, country, deviceInfo });
-                    return res.status(400).json({ message: 'TOTP required', requiresTotp: true });
+                    return res.status(400).json({
+                        success: false,
+                        message: 'TOTP required',
+                        requiresTotp: true
+                    });
                 }
                 const isValid = speakeasy.totp.verify({
                     secret: user.twoFactorSecret,
@@ -426,45 +461,56 @@ export const login = [
                 });
                 if (!isValid) {
                     console.warn('Invalid TOTP', { userId: user._id, ip, country, deviceInfo });
-                    return res.status(400).json({ message: 'Invalid TOTP' });
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid TOTP'
+                    });
                 }
             }
 
-            const existingFingerprints = user.sessions.map(s => s.fingerprint);
-            const isNewDevice = fingerprint && !existingFingerprints.includes(fingerprint) && !DEV_MODE;
+            // Check device verification
+            const isDeviceVerified = user.isDeviceVerified(fingerprint);
 
-            if (isNewDevice) {
-                try {
-                    const otp = await user.generateDeviceVerifyToken(fingerprint);
-                    const emailSent = await sendDeviceVerificationEmail(user.email, otp, deviceInfo, ip);
-                    if (!emailSent) {
-                        console.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
-                        return res.status(500).json({ message: 'Failed to send verification email' });
-                    }
-                    await user.save();
-                    console.info('New device detected; OTP sent', {
-                        userId: user._id,
-                        fingerprint,
-                        ip,
-                        country,
-                        deviceInfo,
-                        deviceVerifyFingerprint: user.deviceVerifyFingerprint,
-                        deviceVerifyExpires: user.deviceVerifyExpires,
+            if (!isDeviceVerified && !DEV_MODE) {
+                console.info('New device detected', { userId: user._id, fingerprint, ip, country, deviceInfo });
+
+                const verificationCode = await user.addOrUpdateDeviceVerification(fingerprint, deviceInfo, ip, country);
+
+                const emailSent = await sendEmailData('device_verification', user.email, {
+                    username: user.username,
+                    deviceInfo: deviceInfo,
+                    ip: ip,
+                    country: country,
+                    timestamp: new Date().toISOString(),
+                    verificationCode: verificationCode,
+                    supportEmail: 'support@quantumrobots.com'
+                });
+
+                if (!emailSent) {
+                    console.error('Failed to send device verification email', { email: user.email, ip, country, deviceInfo });
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to send verification email'
                     });
-                    return res.status(200).json({ message: 'New device detected. Verify with OTP sent to your email.', requiresOtp: true });
-                } catch (error) {
-                    console.error('Error during device verification setup', {
-                        error: error.message,
-                        stack: error.stack,
-                        userId: user._id,
-                        ip,
-                        country,
-                        deviceInfo,
-                    });
-                    return res.status(500).json({ message: 'Failed to set up device verification' });
                 }
+
+                console.info('Device verification code sent', {
+                    userId: user._id,
+                    fingerprint,
+                    ip,
+                    country,
+                    deviceInfo,
+                });
+
+                return res.status(200).json({
+                    success: false,
+                    message: 'New device detected. Please check your email for the verification code.',
+                    requiresDeviceVerification: true,
+                    fingerprint: fingerprint
+                });
             }
 
+            // Successful login
             user.lastLogin = new Date();
             user.lastLoginIp = ip;
             user.lastLoginDevice = deviceInfo;
@@ -474,13 +520,22 @@ export const login = [
             const refreshToken = await user.generateRefreshToken(fingerprint || 'dev-mode', ip, country, deviceInfo);
 
             await user.save();
-            console.info('Login successful', { userId: user._id, username: user.username, ip, country, deviceInfo });
+
+            console.info('Login successful', {
+                userId: user._id,
+                username: user.username,
+                ip,
+                country,
+                deviceInfo
+            });
 
             return res.json({
+                success: true,
                 accessToken,
                 refreshToken,
                 csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
                 user: sanitizeUser(user),
+                message: 'Login successful'
             });
         } catch (error) {
             console.error('Login error', {
@@ -492,27 +547,27 @@ export const login = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            return res.status(500).json({ message: 'Server error during login' });
+            return res.status(500).json({
+                success: false,
+                message: 'Server error during login'
+            });
         }
     }),
 ];
 
-export const verifyDevice = [
+export const verifyDeviceCode = [
     setSecurityHeaders,
     validate([
-        body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 characters'),
+        body('verificationCode').isLength({ min: 6, max: 6 }).withMessage('Verification code must be 6 digits'),
         body('fingerprint').notEmpty().withMessage('Device fingerprint is required'),
         body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
     ]),
     asyncHandler(async (req, res) => {
-        const { otp, fingerprint, usernameOrEmail } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { verificationCode, fingerprint, usernameOrEmail } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
-        console.info('Verify device route accessed', {
-            body: { usernameOrEmail, fingerprint, otp: '[REDACTED]' },
+        console.info('Verify device code route accessed', {
+            body: { usernameOrEmail, fingerprint, verificationCode: '[REDACTED]' },
             ip,
             country,
             deviceInfo,
@@ -525,39 +580,25 @@ export const verifyDevice = [
                     { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
                     { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
                 ],
-                deviceVerifyFingerprint: fingerprint,
-                deviceVerifyExpires: { $gt: Date.now() },
             });
 
             if (!user) {
-                console.warn('Invalid or expired device verification', {
+                console.warn('User not found for device verification', { usernameOrEmail, ip, country, deviceInfo });
+                return res.status(404).json({ message: 'User not found' });
+            }
+
+            const isVerified = await user.verifyDeviceCode(fingerprint, verificationCode);
+
+            if (!isVerified) {
+                console.warn('Invalid or expired verification code', {
                     usernameOrEmail,
                     fingerprint,
                     ip,
                     country,
-                    deviceInfo,
-                    timestamp: new Date().toISOString(),
-                    usersFound: await Users.find({
-                        $or: [
-                            { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                            { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                        ],
-                    }).countDocuments(),
-                    fingerprintMatch: await Users.find({ deviceVerifyFingerprint: fingerprint }).countDocuments(),
-                    expiresValid: await Users.find({ deviceVerifyExpires: { $gt: Date.now() } }).countDocuments(),
+                    deviceInfo
                 });
-                return res.status(400).json({ message: 'Invalid or expired verification' });
+                return res.status(400).json({ message: 'Invalid or expired verification code' });
             }
-
-            const isMatch = await bcrypt.compare(otp, user.deviceVerifyToken);
-            if (!isMatch) {
-                console.warn('Invalid OTP', { userId: user._id, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Invalid OTP' });
-            }
-
-            user.deviceVerifyToken = undefined;
-            user.deviceVerifyExpires = undefined;
-            user.deviceVerifyFingerprint = undefined;
 
             user.lastLogin = new Date();
             user.lastLoginIp = ip;
@@ -566,17 +607,27 @@ export const verifyDevice = [
 
             const accessToken = await user.generateAccessToken();
             const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
+
             await user.save();
 
-            console.info('Device verified successfully', { userId: user._id, username: user.username, ip, country, deviceInfo });
-            res.json({
+            console.info('Device verified and login successful', {
+                userId: user._id,
+                username: user.username,
+                fingerprint,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            return res.json({
                 accessToken,
                 refreshToken,
                 csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
                 user: sanitizeUser(user),
+                message: 'Device verified successfully!'
             });
         } catch (error) {
-            console.error('Verify device error', {
+            console.error('Verify device code error', {
                 error: error.message,
                 stack: error.stack,
                 usernameOrEmail,
@@ -600,10 +651,7 @@ export const refreshToken = [
     asyncHandler(async (req, res) => {
         const { refreshToken, fingerprint } = req.body;
         const csrfToken = req.headers['x-csrf-token'];
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Refresh token route accessed', {
             body: { fingerprint, refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
@@ -637,26 +685,15 @@ export const refreshToken = [
                     ip,
                     country,
                     deviceInfo,
-                    sessionFound: user.sessions.some(s => s.token === refreshToken),
-                    csrfMatch: user.sessions.some(s => s.csrfToken === csrfToken),
                 });
                 return res.status(401).json({ message: 'Invalid refresh token or CSRF token' });
             }
             const session = user.sessions[sessionIndex];
 
             if (!DEV_MODE && fingerprint && session.fingerprint !== fingerprint) {
-                const trustedFingerprints = user.sessions.map(s => s.fingerprint);
-                if (!trustedFingerprints.includes(fingerprint)) {
-                    await sendSuspiciousActivityEmail(user.email, {
-                        ip,
-                        country,
-                        deviceInfo,
-                        message: 'New device detected during refresh. Re-login required.',
-                    });
-                    user.sessions = [];
-                    await user.save();
-                    console.warn('Fingerprint mismatch, sessions cleared', { userId: user._id, ip, country, deviceInfo });
-                    return res.status(401).json({ message: 'New device detected. Please re-login to verify.' });
+                if (!user.isDeviceVerified(fingerprint)) {
+                    console.warn('Unverified device during refresh', { userId: user._id, ip, country, deviceInfo });
+                    return res.status(401).json({ message: 'Unverified device detected. Please log in again.' });
                 }
             }
 
@@ -700,10 +737,7 @@ export const logout = [
     asyncHandler(async (req, res) => {
         const { refreshToken } = req.body;
         const csrfToken = req.headers['x-csrf-token'];
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Logout route accessed', {
             body: { refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
@@ -728,8 +762,6 @@ export const logout = [
                     ip,
                     country,
                     deviceInfo,
-                    sessionFound: user.sessions.some(s => s.token === refreshToken),
-                    csrfMatch: csrfToken ? user.sessions.some(s => s.csrfToken === csrfToken) : true,
                 });
                 return res.status(401).json({ message: 'Invalid refresh token or CSRF token' });
             }
@@ -758,10 +790,7 @@ export const requestPasswordReset = [
     validate([body('email').isEmail().withMessage('Invalid email format')]),
     asyncHandler(async (req, res) => {
         const { email } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Request password reset accessed', {
             body: { email },
@@ -786,10 +815,17 @@ export const requestPasswordReset = [
             await user.save();
 
             const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-            const emailSent = await sendPasswordResetEmail(email, resetUrl);
+
+            // Send password reset email data
+            const emailSent = await sendEmailData('password_reset', email, {
+                username: user.username,
+                resetLink: resetUrl,
+                token: resetToken,
+                supportEmail: 'support@quantumrobots.com'
+            });
 
             if (!emailSent) {
-                console.error('Failed to send password reset email', { email, ip, country, deviceInfo });
+                console.error('Failed to send password reset email via external service', { email, ip, country, deviceInfo });
                 return res.status(500).json({ message: 'Failed to send password reset email' });
             }
 
@@ -824,10 +860,7 @@ export const resetPassword = [
     asyncHandler(async (req, res) => {
         const { token } = req.query;
         const { newPassword } = req.body;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Reset password route accessed', {
             body: { newPassword: '[REDACTED]', confirmPassword: '[REDACTED]' },
@@ -879,10 +912,7 @@ export const verifyResetToken = [
     validate([query('token').notEmpty().withMessage('Reset token is required')]),
     asyncHandler(async (req, res) => {
         const { token } = req.query;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Verify reset token route accessed', {
             query: { token: '[REDACTED]' },
@@ -923,10 +953,7 @@ export const updateProfileImage = [
     asyncHandler(async (req, res) => {
         const { image } = req.body;
         const userId = req.user?.id;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Update profile image route accessed', {
             userId,
@@ -987,10 +1014,7 @@ export const updateUsername = [
     asyncHandler(async (req, res) => {
         const { newUsername } = req.body;
         const userId = req.user?.id;
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Update username route accessed', {
             body: { newUsername },
@@ -1044,10 +1068,7 @@ export const updateUsername = [
 export const getProfile = [
     setSecurityHeaders,
     asyncHandler(async (req, res) => {
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Get profile route accessed', {
             userId: req.user.id,
@@ -1087,10 +1108,7 @@ export const getProfile = [
 export const getAdminDashboard = [
     setSecurityHeaders,
     asyncHandler(async (req, res) => {
-        const ip = requestIp.getClientIp(req);
-        const geo = geoip.lookup(ip);
-        const country = geo ? geo.country : 'unknown';
-        const deviceInfo = req.headers['user-agent'] || 'unknown';
+        const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Admin dashboard accessed', {
             userId: req.user.id,
@@ -1123,3 +1141,46 @@ export const getAdminDashboard = [
         }
     }),
 ];
+
+export const cleanupExpiredData = asyncHandler(async (req, res) => {
+    try {
+        const now = new Date();
+
+        const usersWithExpiredDevices = await Users.updateMany(
+            {
+                isActive: true,
+                'devices': {
+                    $elemMatch: {
+                        status: 'NOT CONFIRMED',
+                        expiresAt: { $lt: now }
+                    }
+                }
+            },
+            {
+                $pull: {
+                    devices: {
+                        status: 'NOT CONFIRMED',
+                        expiresAt: { $lt: now }
+                    }
+                }
+            }
+        );
+
+        console.info('Cleanup completed', {
+            cleanedUsers: usersWithExpiredDevices.modifiedCount,
+            timestamp: now.toISOString()
+        });
+
+        res.json({
+            message: 'Cleanup completed successfully',
+            cleanedDevices: usersWithExpiredDevices.modifiedCount
+        });
+    } catch (error) {
+        console.error('Cleanup error', {
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString(),
+        });
+        res.status(500).json({ message: 'Server error during cleanup' });
+    }
+});

@@ -26,6 +26,11 @@ const RiskProfile = {
     HIGH: "high",
 };
 
+const DeviceStatus = {
+    NOT_CONFIRMED: "NOT CONFIRMED",
+    YES_IT_ME: "YES IT ME"
+};
+
 const SessionSchema = new mongoose.Schema({
     token: { type: String, required: true },
     expires: { type: Date, required: true },
@@ -37,6 +42,50 @@ const SessionSchema = new mongoose.Schema({
     csrfToken: { type: String },
     createdAt: { type: Date, default: Date.now },
 }, { _id: false });
+
+const DeviceSchema = new mongoose.Schema({
+    fingerprint: {
+        type: String,
+        required: true
+    },
+    status: {
+        type: String,
+        enum: Object.values(DeviceStatus),
+        default: DeviceStatus.NOT_CONFIRMED,
+        required: true
+    },
+    deviceInfo: {
+        type: String,
+        required: true
+    },
+    ip: {
+        type: String,
+        required: true
+    },
+    country: {
+        type: String,
+        default: 'unknown'
+    },
+    verificationCode: {
+        type: String
+    },
+    verificationCodeExpires: {
+        type: Date
+    },
+    verifiedAt: {
+        type: Date
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    expiresAt: {
+        type: Date
+    }
+}, { _id: false });
+
+// Add TTL index for devices with expiresAt
+DeviceSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const UserSchema = new mongoose.Schema({
     username: {
@@ -65,6 +114,7 @@ const UserSchema = new mongoose.Schema({
     lastLoginIp: { type: String },
     lastLoginDevice: { type: String },
     sessions: { type: [SessionSchema], default: [] },
+    devices: { type: [DeviceSchema], default: [] }, // NEW: Added devices array
     passwordResetToken: { type: String },
     passwordResetExpires: { type: Date },
     emailResetToken: { type: String },
@@ -73,9 +123,7 @@ const UserSchema = new mongoose.Schema({
     usernameResetExpires: { type: Date },
     emailVerifyToken: { type: String },
     emailVerifyExpires: { type: Date },
-    deviceVerifyToken: { type: String },
-    deviceVerifyExpires: { type: Date },
-    deviceVerifyFingerprint: { type: String },
+    // REMOVED: deviceVerifyToken, deviceVerifyExpires, deviceVerifyFingerprint
     robots: {
         type: [{ type: mongoose.Schema.Types.ObjectId, ref: "UserRobot" }],
         default: []
@@ -110,6 +158,12 @@ const UserSchema = new mongoose.Schema({
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
+});
+
+// Add TTL index for unverified users (24 hours)
+UserSchema.index({ createdAt: 1 }, {
+    expireAfterSeconds: 86400,
+    partialFilterExpression: { isActive: false }
 });
 
 UserSchema.index({ sessions: 1 });
@@ -237,29 +291,117 @@ UserSchema.methods.cleanSessions = async function () {
     }
 };
 
-UserSchema.methods.generateDeviceVerifyToken = async function (fingerprint) {
+// NEW: Method to add or update device with verification code
+UserSchema.methods.addOrUpdateDeviceVerification = async function (fingerprint, deviceInfo, ip, country) {
     try {
-        const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit numeric OTP
-        const hashedOtp = await bcrypt.hash(otp, 10);
-        this.deviceVerifyToken = hashedOtp;
-        this.deviceVerifyFingerprint = fingerprint;
-        this.deviceVerifyExpires = new Date(Date.now() + ms("15m")); // Extended to 15 minutes
-        await this.save(); // Ensure fields are persisted
-        console.info("Device verification token generated", {
+        const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const verificationCodeExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
+
+        const existingDeviceIndex = this.devices.findIndex(device =>
+            device.fingerprint === fingerprint && device.status === DeviceStatus.NOT_CONFIRMED
+        );
+
+        if (existingDeviceIndex !== -1) {
+            // Update existing device
+            this.devices[existingDeviceIndex].verificationCode = verificationCode;
+            this.devices[existingDeviceIndex].verificationCodeExpires = verificationCodeExpires;
+            this.devices[existingDeviceIndex].expiresAt = expiresAt;
+            this.devices[existingDeviceIndex].deviceInfo = deviceInfo;
+            this.devices[existingDeviceIndex].ip = ip;
+            this.devices[existingDeviceIndex].country = country;
+        } else {
+            // Add new device
+            this.devices.push({
+                fingerprint,
+                status: DeviceStatus.NOT_CONFIRMED,
+                deviceInfo,
+                ip,
+                country,
+                verificationCode,
+                verificationCodeExpires,
+                createdAt: new Date(),
+                expiresAt
+            });
+        }
+
+        await this.save();
+        console.info("Device verification code generated", {
             userId: this._id.toString(),
             email: this.email,
             fingerprint,
-            expires: this.deviceVerifyExpires,
-            otp: "[REDACTED]",
+            verificationCode: "[REDACTED]"
         });
-        return otp;
+        return verificationCode;
     } catch (error) {
-        console.error("Failed to generate device verification token", {
+        console.error("Failed to generate device verification code", {
             userId: this._id.toString(),
             email: this.email,
             fingerprint,
             error: error.message,
         });
+        throw error;
+    }
+};
+
+// NEW: Method to verify device code
+UserSchema.methods.verifyDeviceCode = async function (fingerprint, verificationCode) {
+    try {
+        const device = this.devices.find(d =>
+            d.fingerprint === fingerprint &&
+            d.status === DeviceStatus.NOT_CONFIRMED &&
+            d.verificationCode === verificationCode &&
+            d.verificationCodeExpires > new Date()
+        );
+
+        if (!device) {
+            return false;
+        }
+
+        // Update device status
+        device.status = DeviceStatus.YES_IT_ME;
+        device.verifiedAt = new Date();
+        device.verificationCode = undefined;
+        device.verificationCodeExpires = undefined;
+        device.expiresAt = undefined; // Remove TTL
+
+        await this.save();
+        console.info("Device verified successfully", {
+            userId: this._id.toString(),
+            email: this.email,
+            fingerprint
+        });
+        return true;
+    } catch (error) {
+        console.error("Failed to verify device code", {
+            userId: this._id.toString(),
+            email: this.email,
+            fingerprint,
+            error: error.message,
+        });
+        throw error;
+    }
+};
+
+// NEW: Method to check if device is verified
+UserSchema.methods.isDeviceVerified = function (fingerprint) {
+    const device = this.devices.find(d =>
+        d.fingerprint === fingerprint && d.status === DeviceStatus.YES_IT_ME
+    );
+    return !!device;
+};
+
+// Add this method to your UserSchema methods
+UserSchema.statics.cleanupExpiredUnverifiedUsers = async function () {
+    try {
+        const result = await this.deleteMany({
+            isActive: false,
+            createdAt: { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } // 24 hours
+        });
+        console.info('Cleaned up expired unverified users', { deletedCount: result.deletedCount });
+        return result;
+    } catch (error) {
+        console.error('Failed to cleanup expired unverified users', { error: error.message });
         throw error;
     }
 };
