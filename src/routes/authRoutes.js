@@ -17,7 +17,6 @@ import {
     setupTOTP,
     setupTOTPLogin,
     verifyTOTPSetup,
-    verifyLoginTOTP,
     disableTOTP,
 } from "../controllers/authController.js";
 
@@ -38,7 +37,6 @@ const router = express.Router();
 router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP);
 router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin); // ← NEW
 router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup);
-router.post("/verify-login-totp", logRequest, loginLimiter, verifyLoginTOTP);
 router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP);
 
 // Public routes
