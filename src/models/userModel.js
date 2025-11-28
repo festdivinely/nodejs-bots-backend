@@ -123,6 +123,10 @@ const UserSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    pendingTOTPEnable: {
+        type: Boolean,
+        default: false
+    },
 
     profileImage: { type: String, default: "" },
     role: { type: String, enum: Object.values(UserRole), default: UserRole.USER },
@@ -131,16 +135,14 @@ const UserSchema = new mongoose.Schema({
     lastLoginIp: { type: String },
     lastLoginDevice: { type: String },
     sessions: { type: [SessionSchema], default: [] },
-    devices: { type: [DeviceSchema], default: [] }, // NEW: Added devices array
-    passwordResetToken: { type: String },
-    passwordResetExpires: { type: Date },
-    emailResetToken: { type: String },
-    emailResetExpires: { type: Date },
-    usernameResetToken: { type: String },
-    usernameResetExpires: { type: Date },
-    emailVerifyToken: { type: String },
-    emailVerifyExpires: { type: Date },
-    // REMOVED: deviceVerifyToken, deviceVerifyExpires, deviceVerifyFingerprint
+    devices: { type: [DeviceSchema], default: [] },
+
+    // ✅ CODE-BASED FIELDS ONLY
+    passwordResetCode: { type: String },
+    passwordResetCodeExpires: { type: Date },
+    emailVerifyCode: { type: String },
+    emailVerifyCodeExpires: { type: Date },
+
     robots: {
         type: [{ type: mongoose.Schema.Types.ObjectId, ref: "UserRobot" }],
         default: []
@@ -168,7 +170,6 @@ const UserSchema = new mongoose.Schema({
     driverLicenseNumber: { type: String },
     kycStatus: { type: String, enum: Object.values(KYCStatus), default: KYCStatus.PENDING },
     riskProfile: { type: String, enum: Object.values(RiskProfile) },
-    twoFactorEnabled: { type: Boolean, default: false },
     preferredLanguage: { type: String, minlength: 2, maxlength: 5 },
     notificationPreferences: { type: [String], default: [] },
 }, {
@@ -202,6 +203,7 @@ UserSchema.pre("save", async function (next) {
     }
 });
 
+// ========== AUTHENTICATION TOKEN METHODS ==========
 UserSchema.methods.generateAccessToken = function () {
     try {
         const token = jwt.sign(
@@ -248,42 +250,151 @@ UserSchema.methods.generateRefreshToken = async function (fingerprint, ip, count
     }
 };
 
-UserSchema.methods.generateEmailVerifyToken = async function () {
+// ========== EMAIL VERIFICATION CODE METHODS ==========
+UserSchema.methods.generateEmailVerifyCode = async function () {
     try {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let token = "";
-        for (let i = 0; i < 6; i++) {
-            token += chars.charAt(Math.floor(Math.random() * chars.length));
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        this.emailVerifyCode = code;
+        this.emailVerifyCodeExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+        await this.save();
+        console.info("Email verification code generated", {
+            userId: this._id.toString(),
+            email: this.email
+        });
+        return code;
+    } catch (error) {
+        console.error("Failed to generate email verification code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+UserSchema.methods.verifyEmailVerifyCode = async function (code) {
+    try {
+        const isValid = this.emailVerifyCode === code &&
+            this.emailVerifyCodeExpires > new Date();
+
+        if (!isValid) {
+            console.warn("Invalid or expired email verification code", {
+                userId: this._id.toString(),
+                email: this.email,
+                providedCode: "[REDACTED]",
+                storedCode: this.emailVerifyCode ? "[REDACTED]" : "none",
+                expires: this.emailVerifyCodeExpires
+            });
+            return false;
         }
-        this.emailVerifyToken = token;
-        this.emailVerifyExpires = new Date(Date.now() + ms("15m"));
-        await this.save();
-        console.info("Email verification token generated", { userId: this._id.toString(), email: this.email });
-        return token;
+
+        console.info("Email verification code verified successfully", {
+            userId: this._id.toString(),
+            email: this.email
+        });
+        return true;
     } catch (error) {
-        console.error("Failed to generate email verification token", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to verify email verification code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
         throw error;
     }
 };
 
-UserSchema.methods.generatePasswordResetToken = async function () {
+UserSchema.methods.clearEmailVerifyCode = async function () {
     try {
-        const token = jwt.sign(
-            { userId: this._id.toString(), purpose: "password_reset", iss: ISSUER, aud: AUDIENCE },
-            privateKey,
-            { expiresIn: "15m", algorithm: "RS256" }
-        );
-        this.passwordResetToken = token;
-        this.passwordResetExpires = new Date(Date.now() + ms("15m"));
+        this.emailVerifyCode = undefined;
+        this.emailVerifyCodeExpires = undefined;
         await this.save();
-        console.info("Password reset token generated", { userId: this._id.toString(), email: this.email });
-        return token;
+        console.info("Email verification code cleared", {
+            userId: this._id.toString(),
+            email: this.email
+        });
     } catch (error) {
-        console.error("Failed to generate password reset token", { userId: this._id.toString(), email: this.email, error: error.message });
+        console.error("Failed to clear email verification code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
         throw error;
     }
 };
 
+// ========== PASSWORD RESET CODE METHODS ==========
+UserSchema.methods.generatePasswordResetCode = async function () {
+    try {
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        this.passwordResetCode = code;
+        this.passwordResetCodeExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+        await this.save();
+        console.info("Password reset code generated", {
+            userId: this._id.toString(),
+            email: this.email
+        });
+        return code;
+    } catch (error) {
+        console.error("Failed to generate password reset code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+UserSchema.methods.verifyPasswordResetCode = async function (code) {
+    try {
+        const isValid = this.passwordResetCode === code &&
+            this.passwordResetCodeExpires > new Date();
+
+        if (!isValid) {
+            console.warn("Invalid or expired password reset code", {
+                userId: this._id.toString(),
+                email: this.email,
+                providedCode: "[REDACTED]",
+                storedCode: this.passwordResetCode ? "[REDACTED]" : "none",
+                expires: this.passwordResetCodeExpires
+            });
+            return false;
+        }
+
+        console.info("Password reset code verified successfully", {
+            userId: this._id.toString(),
+            email: this.email
+        });
+        return true;
+    } catch (error) {
+        console.error("Failed to verify password reset code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+UserSchema.methods.clearPasswordResetCode = async function () {
+    try {
+        this.passwordResetCode = undefined;
+        this.passwordResetCodeExpires = undefined;
+        await this.save();
+        console.info("Password reset code cleared", {
+            userId: this._id.toString(),
+            email: this.email
+        });
+    } catch (error) {
+        console.error("Failed to clear password reset code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+// ========== PASSWORD & SESSION METHODS ==========
 UserSchema.methods.verifyPassword = async function (candidatePassword) {
     try {
         const isMatch = await bcrypt.compare(candidatePassword, this.password);
@@ -308,7 +419,7 @@ UserSchema.methods.cleanSessions = async function () {
     }
 };
 
-// NEW: Method to add or update device with verification code
+// ========== DEVICE VERIFICATION METHODS ==========
 UserSchema.methods.addOrUpdateDeviceVerification = async function (fingerprint, deviceInfo, ip, country) {
     try {
         const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -361,7 +472,6 @@ UserSchema.methods.addOrUpdateDeviceVerification = async function (fingerprint, 
     }
 };
 
-// NEW: Method to verify device code
 UserSchema.methods.verifyDeviceCode = async function (fingerprint, verificationCode) {
     try {
         const device = this.devices.find(d =>
@@ -400,7 +510,6 @@ UserSchema.methods.verifyDeviceCode = async function (fingerprint, verificationC
     }
 };
 
-// NEW: Method to check if device is verified
 UserSchema.methods.isDeviceVerified = function (fingerprint) {
     const device = this.devices.find(d =>
         d.fingerprint === fingerprint && d.status === DeviceStatus.YES_IT_ME
@@ -408,7 +517,7 @@ UserSchema.methods.isDeviceVerified = function (fingerprint) {
     return !!device;
 };
 
-// Add this method to your UserSchema methods
+// ========== CLEANUP METHODS ==========
 UserSchema.statics.cleanupExpiredUnverifiedUsers = async function () {
     try {
         const result = await this.deleteMany({
@@ -423,8 +532,7 @@ UserSchema.statics.cleanupExpiredUnverifiedUsers = async function () {
     }
 };
 
-
-// Add this method to your UserSchema methods in userModel.js
+// ========== TOTP METHODS ==========
 UserSchema.methods.disableTOTP = async function () {
     try {
         this.twoFactorEnabled = false;

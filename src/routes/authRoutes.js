@@ -12,12 +12,15 @@ import {
     getProfile,
     getAdminDashboard,
     verifyDeviceCode,
-    verifyResetToken,
+    verifyResetCode,
     cleanupExpiredData,
     setupTOTP,
-    verifyTOTP,
-    disableTOTP, // Add disableTOTP
+    setupTOTPLogin,
+    verifyTOTPSetup,
+    verifyLoginTOTP,
+    disableTOTP,
 } from "../controllers/authController.js";
+
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
 import {
     registerLimiter,
@@ -31,9 +34,12 @@ import {
 const router = express.Router();
 
 // TOTP Routes
+// TOTP Routes
 router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP);
-router.post("/verify-totp", logRequest, protect, csrfProtect, verifyTOTP);
-router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP); // Add disable route
+router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin); // ← NEW
+router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup);
+router.post("/verify-login-totp", logRequest, loginLimiter, verifyLoginTOTP);
+router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP);
 
 // Public routes
 router.post("/register", logRequest, registerLimiter, register);
@@ -41,9 +47,9 @@ router.post("/login", logRequest, loginLimiter, login);
 router.post("/verify-device-code", logRequest, loginLimiter, verifyDeviceCode);
 router.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
 router.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
-router.post("/reset-password/:token", logRequest, resetLimiter, resetPassword);
+router.post("/verify-reset-code", logRequest, resetLimiter, verifyResetCode); // ✅ ADD THIS
+router.post("/reset-password", logRequest, resetLimiter, resetPassword); // ✅ REMOVE :token
 router.post("/refresh-token", logRequest, refreshLimiter, refreshToken);
-router.get("/verify-reset-token/:token", logRequest, resetLimiter, verifyResetToken);
 
 // Protected routes
 router.post("/logout", logRequest, protect, csrfProtect, logout);
