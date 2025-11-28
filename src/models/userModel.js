@@ -107,6 +107,23 @@ const UserSchema = new mongoose.Schema({
         required: [true, "Password is required"],
         minlength: [8, "Password must be at least 8 characters"],
     },
+
+    // TOTP Fields
+    twoFactorEnabled: {
+        type: Boolean,
+        default: false
+    },
+    twoFactorSecret: {
+        type: String
+    },
+    twoFactorBackupCodes: [{
+        type: String
+    }],
+    twoFactorSetupCompleted: {
+        type: Boolean,
+        default: false
+    },
+
     profileImage: { type: String, default: "" },
     role: { type: String, enum: Object.values(UserRole), default: UserRole.USER },
     isActive: { type: Boolean, default: false },
@@ -402,6 +419,31 @@ UserSchema.statics.cleanupExpiredUnverifiedUsers = async function () {
         return result;
     } catch (error) {
         console.error('Failed to cleanup expired unverified users', { error: error.message });
+        throw error;
+    }
+};
+
+
+// Add this method to your UserSchema methods in userModel.js
+UserSchema.methods.disableTOTP = async function () {
+    try {
+        this.twoFactorEnabled = false;
+        this.twoFactorSecret = undefined;
+        this.twoFactorBackupCodes = [];
+        this.twoFactorSetupCompleted = false;
+
+        await this.save();
+        console.info("TOTP disabled successfully", {
+            userId: this._id.toString(),
+            email: this.email
+        });
+        return true;
+    } catch (error) {
+        console.error("Failed to disable TOTP", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
         throw error;
     }
 };

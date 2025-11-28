@@ -14,6 +14,9 @@ import {
     verifyDeviceCode,
     verifyResetToken,
     cleanupExpiredData,
+    setupTOTP,
+    verifyTOTP,
+    disableTOTP, // Add disableTOTP
 } from "../controllers/authController.js";
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
 import {
@@ -27,10 +30,15 @@ import {
 
 const router = express.Router();
 
+// TOTP Routes
+router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP);
+router.post("/verify-totp", logRequest, protect, csrfProtect, verifyTOTP);
+router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP); // Add disable route
+
 // Public routes
 router.post("/register", logRequest, registerLimiter, register);
 router.post("/login", logRequest, loginLimiter, login);
-router.post("/verify-device-code", logRequest, loginLimiter, verifyDeviceCode); // New device verification
+router.post("/verify-device-code", logRequest, loginLimiter, verifyDeviceCode);
 router.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
 router.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
 router.post("/reset-password/:token", logRequest, resetLimiter, resetPassword);

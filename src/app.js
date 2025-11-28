@@ -6,6 +6,10 @@ import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import errorHandler, { NotFoundError } from "./middleware/errorMiddleware.js";
 import { dbHealthCheck, connectDb } from './config/mongodb.config.js'; // Import connectDb too
+// Use route files
+import authRoutes from "./routes/authRoutes.js";
+import botRoutes from "./routes/botRoutes.js";
+
 
 dotenv.config();
 
@@ -203,9 +207,6 @@ console.info("Initializing routes", {
     environment: process.env.NODE_ENV
 });
 
-// Use route files
-import authRoutes from "./routes/authRoutes.js";
-import botRoutes from "./routes/botRoutes.js";
 
 app.use("/api/auth", authRoutes);
 app.use("/api/bot", botRoutes);
