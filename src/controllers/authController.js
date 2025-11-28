@@ -286,7 +286,6 @@ export const register = [
 // Setup TOTP (Generate QR Code)
 // Setup TOTP (Generate Secret Only - No QR Code)
 export const setupTOTP = [
-    protect,
     asyncHandler(async (req, res) => {
         try {
             const user = await Users.findById(req.user.id);
@@ -328,7 +327,6 @@ export const setupTOTP = [
 
 // Verify TOTP Code (Used for both setup and login)
 export const verifyTOTP = [
-    protect, // For setup - user is authenticated
     validate([
         body('totpCode').isLength({ min: 6, max: 6 }).withMessage('TOTP code must be 6 digits')
     ]),
@@ -416,7 +414,6 @@ export const verifyTOTP = [
 // Disable TOTP
 // Updated disableTOTP controller using the model method
 export const disableTOTP = [
-    protect,
     validate([
         body('password').notEmpty().withMessage('Password is required to disable TOTP')
     ]),
