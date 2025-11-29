@@ -16,6 +16,7 @@ import {
     cleanupExpiredData,
     setupTOTP,
     setupTOTPLogin,
+    verifyTOTPSetupLogin,
     verifyTOTPSetup,
     disableTOTP,
 } from "../controllers/authController.js";
@@ -33,16 +34,16 @@ import {
 const router = express.Router();
 
 // TOTP Routes
-// TOTP Routes
-router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP);
-router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin); // ← NEW
-router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup);
+router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP); // ✅ In-app setup
+router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin); // ✅ Login setup
+router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup); // ✅ KEEP PROTECTED - for in-app setup
+router.post("/verify-totp-setup-login", logRequest, loginLimiter, verifyTOTPSetupLogin); // ✅ NEW - for login setup
 router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP);
 
 // Public routes
 router.post("/register", logRequest, registerLimiter, register);
 router.post("/login", logRequest, loginLimiter, login);
-router.post("/verify-device-code", logRequest, loginLimiter, verifyDeviceCode);
+router.post("/verify-device", logRequest, loginLimiter, verifyDeviceCode);
 router.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
 router.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
 router.post("/verify-reset-code", logRequest, resetLimiter, verifyResetCode); // ✅ ADD THIS

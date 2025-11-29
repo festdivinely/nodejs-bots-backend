@@ -167,7 +167,7 @@ export const register = [
             if (existingUser && !existingUser.isActive) {
                 console.info('Unverified user attempting to register again', { email, username, ip, country, deviceInfo });
 
-                // ✅ GENERATE 6-DIGIT CODE (not token)
+                // GENERATE 6-DIGIT CODE (not token)
                 const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
                 existingUser.emailVerifyCode = verificationCode;
                 existingUser.emailVerifyCodeExpires = new Date(Date.now() + 15 * 60 * 1000);
@@ -192,11 +192,14 @@ export const register = [
                     return res.status(500).json({ message: 'Failed to send verification email' });
                 }
 
+                // ✅ FIXED: Added requiresTOTPSetup to response
                 return res.status(200).json({
                     success: true,
                     message: 'Verification code resent to your email.',
                     requiresEmailVerification: true,
-                    email: email
+                    email: email,
+                    requiresTOTPSetup: enableTOTP || false, // ← THIS IS THE FIX
+                    pendingTOTPEnable: enableTOTP || false
                 });
             }
 
@@ -222,13 +225,14 @@ export const register = [
                 pendingTOTPEnable: enableTOTP || false
             });
 
-            // ✅ GENERATE 6-DIGIT CODE (not token)
+            // GENERATE 6-DIGIT CODE (not token)
             const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
             user.emailVerifyCode = verificationCode;
             user.emailVerifyCodeExpires = new Date(Date.now() + 15 * 60 * 1000);
 
+            // ✅ DEVICE IS NOW CREATED WITH THE FINGERPRINT FROM FRONTEND
             user.devices.push({
-                fingerprint: fingerprint,
+                fingerprint: fingerprint, // ✅ THIS WILL NOW BE PROVIDED
                 status: 'NOT CONFIRMED',
                 deviceInfo: deviceInfo,
                 ip: ip,
@@ -259,7 +263,8 @@ export const register = [
                 message: 'Verification code sent to your email.',
                 requiresEmailVerification: true,
                 email: email,
-                pendingTOTPEnable: enableTOTP || false
+                pendingTOTPEnable: enableTOTP || false,
+                requiresTOTPSetup: enableTOTP || false
             });
         } catch (error) {
             console.error('Registration error', {
@@ -278,7 +283,6 @@ export const register = [
         }
     }),
 ];
-
 // Setup TOTP (Generate QR Code)
 // Setup TOTP (Generate Secret Only - No QR Code)
 export const setupTOTP = [
@@ -452,41 +456,17 @@ export const setupTOTPLogin = [
     })
 ];
 
-// Updated verifyTOTPSetup to handle both cases (in-app setup and login setup)
+// For IN-APP setup (user already logged in)
 export const verifyTOTPSetup = [
     validate([
         body('totpCode').isLength({ min: 6, max: 6 }).withMessage('TOTP code must be 6 digits'),
-        body('usernameOrEmail').optional(), // Optional for login setup
-        body('fingerprint').optional(), // Optional for login setup
     ]),
     asyncHandler(async (req, res) => {
-        const { totpCode, usernameOrEmail, fingerprint } = req.body;
+        const { totpCode } = req.body;
         const { ip, country, deviceInfo } = getClientInfo(req);
 
         try {
-            let user;
-
-            // Determine if this is in-app setup or login setup
-            if (req.user && req.user.id) {
-                // In-app setup (user is already logged in)
-                user = await Users.findById(req.user.id);
-            } else if (usernameOrEmail && fingerprint) {
-                // Login setup (user is completing TOTP setup during login)
-                user = await Users.findOne({
-                    $or: [
-                        { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                        { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
-                    ],
-                    isActive: true,
-                    pendingTOTPEnable: true,
-                    twoFactorSetupCompleted: false
-                });
-            } else {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid request parameters'
-                });
-            }
+            const user = await Users.findById(req.user.id);
 
             if (!user || !user.twoFactorSecret) {
                 return res.status(400).json({
@@ -524,47 +504,134 @@ export const verifyTOTPSetup = [
             user.twoFactorEnabled = true;
             user.twoFactorSetupCompleted = true;
             user.twoFactorBackupCodes = hashedBackupCodes;
-            user.pendingTOTPEnable = false; // Clear pending flag
-
-            let responseData = {
-                success: true,
-                message: 'TOTP setup completed successfully',
-                backupCodes, // Show only once!
-                twoFactorEnabled: true
-            };
-
-            // If this is login setup, complete the login process
-            if (usernameOrEmail && fingerprint && !req.user) {
-                user.lastLogin = new Date();
-                user.lastLoginIp = ip;
-                user.lastLoginDevice = deviceInfo;
-                await user.cleanSessions();
-
-                const accessToken = await user.generateAccessToken();
-                const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
-
-                responseData.accessToken = accessToken;
-                responseData.refreshToken = refreshToken;
-                responseData.csrfToken = user.sessions[user.sessions.length - 1].csrfToken;
-                responseData.user = sanitizeUser(user);
-                responseData.message = 'TOTP setup completed and login successful';
-            }
+            user.pendingTOTPEnable = false;
 
             await user.save();
 
-            console.info('TOTP setup completed', {
+            console.info('TOTP setup completed in-app', {
                 userId: user._id,
                 username: user.username,
-                duringLogin: !req.user, // true if during login
                 ip,
                 country,
                 deviceInfo
             });
 
-            return res.json(responseData);
+            return res.json({
+                success: true,
+                message: 'TOTP setup completed successfully',
+                backupCodes, // Show only once!
+                twoFactorEnabled: true
+            });
 
         } catch (error) {
             console.error('TOTP setup verification error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to verify TOTP setup'
+            });
+        }
+    })
+];
+
+// For LOGIN setup (user completing TOTP during login)
+export const verifyTOTPSetupLogin = [
+    validate([
+        body('totpCode').isLength({ min: 6, max: 6 }).withMessage('TOTP code must be 6 digits'),
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
+        body('fingerprint').notEmpty().withMessage('Device fingerprint is required'),
+    ]),
+    asyncHandler(async (req, res) => {
+        const { totpCode, usernameOrEmail, fingerprint } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
+
+        console.info('Verify TOTP setup during login route accessed', {
+            body: { usernameOrEmail, fingerprint, totpCode: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const user = await Users.findOne({
+                $or: [
+                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                ],
+                isActive: true,
+                pendingTOTPEnable: true,
+                twoFactorSetupCompleted: false
+            });
+
+            if (!user || !user.twoFactorSecret) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'TOTP not setup properly or user not found'
+                });
+            }
+
+            // Verify the code
+            const verified = speakeasy.totp.verify({
+                secret: user.twoFactorSecret,
+                encoding: 'base32',
+                token: totpCode,
+                window: 1
+            });
+
+            if (!verified) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid TOTP code'
+                });
+            }
+
+            // Generate backup codes
+            const backupCodes = Array.from({ length: 8 }, () =>
+                Math.random().toString(36).substring(2, 10).toUpperCase()
+            );
+
+            // Hash backup codes
+            const hashedBackupCodes = await Promise.all(
+                backupCodes.map(async (code) => await bcrypt.hash(code, 10))
+            );
+
+            // Complete TOTP setup and login
+            user.twoFactorEnabled = true;
+            user.twoFactorSetupCompleted = true;
+            user.twoFactorBackupCodes = hashedBackupCodes;
+            user.pendingTOTPEnable = false;
+            user.lastLogin = new Date();
+            user.lastLoginIp = ip;
+            user.lastLoginDevice = deviceInfo;
+
+            await user.cleanSessions();
+
+            const accessToken = await user.generateAccessToken();
+            const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
+
+            await user.save();
+
+            console.info('TOTP setup completed during login', {
+                userId: user._id,
+                username: user.username,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            return res.json({
+                success: true,
+                message: 'TOTP setup completed and login successful',
+                backupCodes,
+                twoFactorEnabled: true,
+                accessToken,
+                refreshToken,
+                csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+                user: sanitizeUser(user)
+            });
+
+        } catch (error) {
+            console.error('TOTP setup verification during login error:', error);
             res.status(500).json({
                 success: false,
                 message: 'Failed to verify TOTP setup'
@@ -648,11 +715,12 @@ export const verifyEmail = [
             if (!code) {
                 console.warn('No verification code provided', { ip, country, deviceInfo });
                 return res.status(400).json({
+                    success: false, // ✅ ADD THIS
                     message: 'Verification code is required'
                 });
             }
 
-            // ✅ FIND USER BY VERIFICATION CODE (not token)
+            // ✅ FIND USER BY VERIFICATION CODE
             const user = await Users.findOne({
                 emailVerifyCode: code,
                 emailVerifyCodeExpires: { $gt: Date.now() },
@@ -670,6 +738,7 @@ export const verifyEmail = [
                 }
 
                 return res.status(400).json({
+                    success: false, // ✅ ADD THIS
                     message: 'Invalid or expired verification code'
                 });
             }
@@ -677,12 +746,12 @@ export const verifyEmail = [
             // Update device status and user activation
             user.devices = user.devices.map(device => ({
                 ...device.toObject(),
-                status: 'YES IT ME',
+                status: 'VERIFIED', // ✅ FIX THIS (was 'YES IT ME')
                 verifiedAt: new Date(),
                 expiresAt: undefined
             }));
 
-            // ✅ CLEAR CODE FIELDS (not token fields)
+            // ✅ CLEAR CODE FIELDS
             user.emailVerifyCode = undefined;
             user.emailVerifyCodeExpires = undefined;
             user.isActive = true;
@@ -696,7 +765,9 @@ export const verifyEmail = [
                 deviceInfo
             });
 
+            // ✅ FIXED RESPONSE STRUCTURE
             res.status(200).json({
+                success: true, // ✅ ADD THIS
                 message: 'Email verified successfully! You can now log in.',
                 verified: true
             });
@@ -720,7 +791,11 @@ export const verifyEmail = [
                 console.error('Cleanup failed during verification error:', cleanupError.message);
             }
 
-            res.status(500).json({ message: 'Server error during email verification' });
+            // ✅ FIXED ERROR RESPONSE
+            res.status(500).json({
+                success: false, // ✅ ADD THIS
+                message: 'Server error during email verification'
+            });
         }
     }),
 ];
@@ -803,7 +878,6 @@ export const login = [
                 });
             }
 
-            // ... rest of login logic remains the same (device verification, TOTP, etc.)
             // Check device verification FIRST (before TOTP)
             const isDeviceVerified = user.isDeviceVerified(fingerprint);
 
@@ -876,7 +950,7 @@ export const login = [
                 return res.status(200).json({
                     success: false,
                     message: 'TOTP code required for login',
-                    requiresTOTPVerification: true,
+                    requiresTOTPCode: true, // ✅ FIXED: was requiresTOTPVerification
                     usernameOrEmail: usernameOrEmail
                 });
             }
@@ -955,7 +1029,10 @@ export const verifyDeviceCode = [
 
             if (!user) {
                 console.warn('User not found for device verification', { usernameOrEmail, ip, country, deviceInfo });
-                return res.status(404).json({ message: 'User not found' });
+                return res.status(404).json({
+                    success: false, // ✅ ADD THIS
+                    message: 'User not found'
+                });
             }
 
             const isVerified = await user.verifyDeviceCode(fingerprint, verificationCode);
@@ -968,7 +1045,10 @@ export const verifyDeviceCode = [
                     country,
                     deviceInfo
                 });
-                return res.status(400).json({ message: 'Invalid or expired verification code' });
+                return res.status(400).json({
+                    success: false, // ✅ ADD THIS
+                    message: 'Invalid or expired verification code'
+                });
             }
 
             user.lastLogin = new Date();
@@ -990,7 +1070,9 @@ export const verifyDeviceCode = [
                 deviceInfo
             });
 
+            // ✅ FIXED RESPONSE - ADD success: true
             return res.json({
+                success: true, // ✅ ADD THIS LINE
                 accessToken,
                 refreshToken,
                 csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
@@ -1007,7 +1089,10 @@ export const verifyDeviceCode = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            return res.status(500).json({ message: 'Server error during device verification' });
+            return res.status(500).json({
+                success: false, // ✅ ADD THIS
+                message: 'Server error during device verification'
+            });
         }
     }),
 ];
@@ -1121,12 +1206,33 @@ export const logout = [
         try {
             const payload = jwt.verify(refreshToken, publicKey, { algorithms: ['RS256'] });
             const user = await Users.findById(payload.userId);
+
             if (!user) {
                 console.warn('User not found for logout', { userId: payload.userId, ip, country, deviceInfo });
-                return res.status(401).json({ message: 'Invalid refresh token' });
+                return res.status(401).json({
+                    success: false, // ✅ ADDED
+                    message: 'Invalid refresh token'
+                });
             }
 
-            const sessionIndex = user.sessions.findIndex((s) => s.token === refreshToken && (!csrfToken || s.csrfToken === csrfToken));
+            // ✅ STRICT CSRF CHECK
+            if (!csrfToken) {
+                console.warn('CSRF token missing for logout', {
+                    userId: user._id,
+                    ip,
+                    country,
+                    deviceInfo,
+                });
+                return res.status(401).json({
+                    success: false, // ✅ ADDED
+                    message: 'CSRF token required'
+                });
+            }
+
+            const sessionIndex = user.sessions.findIndex((s) =>
+                s.token === refreshToken && s.csrfToken === csrfToken
+            );
+
             if (sessionIndex === -1) {
                 console.warn('Invalid refresh token or CSRF token', {
                     userId: user._id,
@@ -1134,14 +1240,29 @@ export const logout = [
                     country,
                     deviceInfo,
                 });
-                return res.status(401).json({ message: 'Invalid refresh token or CSRF token' });
+                return res.status(401).json({
+                    success: false, // ✅ ADDED
+                    message: 'Invalid refresh token or CSRF token'
+                });
             }
 
-            user.sessions = user.sessions.filter((s) => s.token !== refreshToken);
+            // Remove the specific session
+            user.sessions.splice(sessionIndex, 1);
             await blacklistToken(refreshToken);
             await user.save();
-            console.info('User logged out successfully', { userId: user._id, ip, country, deviceInfo });
-            res.json({ message: 'Logged out successfully' });
+
+            console.info('User logged out successfully', {
+                userId: user._id,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            res.json({
+                success: true, // ✅ ADDED
+                message: 'Logged out successfully'
+            });
+
         } catch (error) {
             console.error('Logout error', {
                 error: error.message,
@@ -1151,7 +1272,19 @@ export const logout = [
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
-            return res.status(401).json({ message: 'Invalid refresh token' });
+
+            // Handle JWT verification errors specifically
+            if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    success: false, // ✅ ADDED
+                    message: 'Invalid refresh token'
+                });
+            }
+
+            return res.status(500).json({
+                success: false, // ✅ ADDED
+                message: 'Server error during logout'
+            });
         }
     }),
 ];
@@ -1175,11 +1308,17 @@ export const requestPasswordReset = [
             const user = await Users.findOne({ email });
             if (!user) {
                 console.warn('User not found for password reset', { email, ip, country, deviceInfo });
-                return res.status(404).json({ message: 'User not found' });
+                return res.status(404).json({
+                    success: false, // ✅ ADD success property
+                    message: 'User not found'
+                });
             }
             if (!user.isActive) {
                 console.warn('Email not verified for password reset', { email, ip, country, deviceInfo });
-                return res.status(401).json({ message: 'Email not verified' });
+                return res.status(401).json({
+                    success: false, // ✅ ADD success property
+                    message: 'Email not verified'
+                });
             }
 
             // ✅ GENERATE 6-DIGIT CODE
@@ -1197,7 +1336,10 @@ export const requestPasswordReset = [
 
             if (!emailSent) {
                 console.error('Failed to send password reset email via external service', { email, ip, country, deviceInfo });
-                return res.status(500).json({ message: 'Failed to send password reset email' });
+                return res.status(500).json({
+                    success: false, // ✅ ADD success property
+                    message: 'Failed to send password reset email'
+                });
             }
 
             console.info('Password reset code sent', { email, ip, country, deviceInfo });
@@ -1207,12 +1349,91 @@ export const requestPasswordReset = [
             });
         } catch (error) {
             console.error('Request password reset error', error);
-            res.status(500).json({ message: 'Server error during password reset request' });
+            res.status(500).json({
+                success: false, // ✅ ADD success property
+                message: 'Server error during password reset request'
+            });
         }
     }),
 ];
 
-// ✅ UPDATE resetPassword to use code + email
+// ✅ verifyResetCode endpoint
+// ✅ UPDATED verifyResetCode - email comes from either params or authenticated user
+export const verifyResetCode = [
+    setSecurityHeaders,
+    asyncHandler(async (req, res) => {
+        const { code } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
+
+        console.info('Verify reset code route accessed', {
+            body: { code: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            let user;
+            let email;
+
+            // ✅ HANDLE BOTH SCENARIOS:
+            if (req.user && req.user.id) {
+                // Scenario 1: User is authenticated (from app settings)
+                user = await Users.findById(req.user.id);
+                if (!user) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'User not found'
+                    });
+                }
+                email = user.email; // Use the authenticated user's email
+            } else if (req.body.email) {
+                // Scenario 2: User is not authenticated (from forgot password)
+                email = req.body.email;
+                user = await Users.findOne({ email });
+                if (!user) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'User not found'
+                    });
+                }
+            } else {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email is required'
+                });
+            }
+
+            // ✅ VERIFY 6-DIGIT CODE
+            const isValid = user.passwordResetCode === code &&
+                user.passwordResetCodeExpires > new Date();
+
+            if (!isValid) {
+                console.warn('Invalid or expired reset code', { email, ip, country, deviceInfo });
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid or expired reset code'
+                });
+            }
+
+            console.info('Reset code verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            res.status(200).json({
+                success: true,
+                message: 'Reset code verified successfully',
+                email: user.email // ✅ Return email for frontend to use in next step
+            });
+        } catch (error) {
+            console.error('Verify reset code error', error);
+            return res.status(500).json({
+                success: false,
+                message: 'Server error during code verification'
+            });
+        }
+    }),
+];
+
+// ✅ CORRECTED resetPassword - NO code required (already verified)
 export const resetPassword = [
     setSecurityHeaders,
     validate([
@@ -1225,7 +1446,7 @@ export const resetPassword = [
             .withMessage('Passwords do not match'),
     ]),
     asyncHandler(async (req, res) => {
-        const { email, newPassword } = req.body;
+        const { email, newPassword } = req.body; // ✅ NO code parameter
         const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Reset password route accessed', {
@@ -1239,17 +1460,26 @@ export const resetPassword = [
         try {
             const user = await Users.findOne({ email });
             if (!user) {
-                return res.status(404).json({ message: 'User not found' });
+                return res.status(404).json({
+                    success: false, // ✅ ADD success property
+                    message: 'User not found'
+                });
             }
 
-            // ✅ CHECK IF USER HAS VALID RESET CODE (user must have gone through verifyResetCode first)
-            if (!user.passwordResetCode) {
-                return res.status(400).json({ message: 'Please verify reset code first' });
+            // ✅ CHECK IF USER HAS VALID RESET CODE (proves they passed verification)
+            if (!user.passwordResetCode || user.passwordResetCodeExpires < new Date()) {
+                return res.status(400).json({
+                    success: false, // ✅ ADD success property
+                    message: 'Please verify reset code first'
+                });
             }
 
             const isSamePassword = await bcrypt.compare(newPassword, user.password);
             if (isSamePassword) {
-                return res.status(400).json({ message: 'New password cannot be the same as the old password' });
+                return res.status(400).json({
+                    success: false, // ✅ ADD success property
+                    message: 'New password cannot be the same as the old password'
+                });
             }
 
             user.password = newPassword;
@@ -1258,60 +1488,24 @@ export const resetPassword = [
             user.passwordResetCodeExpires = undefined;
             await user.save();
 
-            console.info('Password reset successfully', { userId: user._id, email: user.email, ip, country, deviceInfo });
+            console.info('Password reset successfully', {
+                userId: user._id,
+                email: user.email,
+                ip,
+                country,
+                deviceInfo
+            });
+
             res.json({
                 success: true,
                 message: 'Password reset successful! You can now log in with your new password.'
             });
         } catch (error) {
             console.error('Reset password error', error);
-            return res.status(500).json({ message: 'Server error during password reset' });
-        }
-    }),
-];
-
-// ✅ ADD verifyResetCode endpoint
-export const verifyResetCode = [
-    setSecurityHeaders,
-    validate([
-        body('code').isLength({ min: 6, max: 6 }).withMessage('Reset code must be 6 digits'),
-        body('email').isEmail().withMessage('Email is required')
-    ]),
-    asyncHandler(async (req, res) => {
-        const { code, email } = req.body;
-        const { ip, country, deviceInfo } = getClientInfo(req);
-
-        console.info('Verify reset code route accessed', {
-            body: { email, code: '[REDACTED]' },
-            ip,
-            country,
-            deviceInfo,
-            timestamp: new Date().toISOString(),
-        });
-
-        try {
-            const user = await Users.findOne({ email });
-            if (!user) {
-                return res.status(404).json({ message: 'User not found' });
-            }
-
-            // ✅ VERIFY 6-DIGIT CODE
-            const isValid = user.passwordResetCode === code &&
-                user.passwordResetCodeExpires > new Date();
-
-            if (!isValid) {
-                console.warn('Invalid or expired reset code', { email, ip, country, deviceInfo });
-                return res.status(400).json({ message: 'Invalid or expired reset code' });
-            }
-
-            console.info('Reset code verified', { userId: user._id, email: user.email, ip, country, deviceInfo });
-            res.status(200).json({
-                success: true,
-                message: 'Reset code verified successfully'
+            return res.status(500).json({
+                success: false, // ✅ ADD success property
+                message: 'Server error during password reset'
             });
-        } catch (error) {
-            console.error('Verify reset code error', error);
-            return res.status(500).json({ message: 'Server error during code verification' });
         }
     }),
 ];
