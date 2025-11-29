@@ -19,6 +19,8 @@ import {
     verifyTOTPSetupLogin,
     verifyTOTPSetup,
     disableTOTP,
+    resendVerifyEmail,
+    resendVerifyDevice // ✅ ADD THIS IMPORT
 } from "../controllers/authController.js";
 
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
@@ -34,20 +36,22 @@ import {
 const router = express.Router();
 
 // TOTP Routes
-router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP); // ✅ In-app setup
-router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin); // ✅ Login setup
-router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup); // ✅ KEEP PROTECTED - for in-app setup
-router.post("/verify-totp-setup-login", logRequest, loginLimiter, verifyTOTPSetupLogin); // ✅ NEW - for login setup
+router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP);
+router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin);
+router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup);
+router.post("/verify-totp-setup-login", logRequest, loginLimiter, verifyTOTPSetupLogin);
 router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP);
 
 // Public routes
 router.post("/register", logRequest, registerLimiter, register);
 router.post("/login", logRequest, loginLimiter, login);
 router.post("/verify-device", logRequest, loginLimiter, verifyDeviceCode);
+router.post("/resend-verify-device", logRequest, loginLimiter, resendVerifyDevice); // ✅ ADD THIS ROUTE
 router.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
+router.post('/resend-verify-email', logRequest, verifyLimiter, resendVerifyEmail);
 router.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
-router.post("/verify-reset-code", logRequest, resetLimiter, verifyResetCode); // ✅ ADD THIS
-router.post("/reset-password", logRequest, resetLimiter, resetPassword); // ✅ REMOVE :token
+router.post("/verify-reset-code", logRequest, resetLimiter, verifyResetCode);
+router.post("/reset-password", logRequest, resetLimiter, resetPassword);
 router.post("/refresh-token", logRequest, refreshLimiter, refreshToken);
 
 // Protected routes
@@ -57,7 +61,7 @@ router.get("/admin", logRequest, protect, requireRole(["admin"]), getAdminDashbo
 router.put("/profile/image", logRequest, protect, csrfProtect, updateProfileImage);
 router.put("/profile/username", logRequest, protect, csrfProtect, updateUsername);
 
-// Admin only cleanup route (optional)
+// Admin only cleanup route
 router.post("/cleanup", logRequest, protect, requireRole(["admin"]), cleanupExpiredData);
 
 export default router;

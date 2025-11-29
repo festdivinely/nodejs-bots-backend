@@ -800,6 +800,132 @@ export const verifyEmail = [
     }),
 ];
 
+
+export const resendVerifyEmail = [
+    setSecurityHeaders,
+    validate([
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
+    ]),
+    asyncHandler(async (req, res) => {
+        const { usernameOrEmail } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
+
+        console.info('Resend verify email route accessed', {
+            body: { usernameOrEmail },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            // Find user by username or email
+            const user = await Users.findOne({
+                $or: [
+                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                ],
+                isActive: false // Only resend for unverified users
+            });
+
+            if (!user) {
+                console.warn('User not found or already verified', {
+                    usernameOrEmail,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                return res.status(400).json({
+                    success: false,
+                    message: 'User not found or already verified'
+                });
+            }
+
+            // Check if user has expired (24-hour window)
+            const userAge = Date.now() - user.createdAt.getTime();
+            const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+
+            if (userAge > maxAge) {
+                console.warn('Registration expired, deleting user', {
+                    userId: user._id,
+                    email: user.email,
+                    createdAt: user.createdAt,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+
+                await Users.deleteOne({ _id: user._id });
+                return res.status(400).json({
+                    success: false,
+                    message: 'Registration expired. Please sign up again.',
+                    action: 'signup'
+                });
+            }
+
+            // Generate new 6-digit verification code
+            const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+            user.emailVerifyCode = verificationCode;
+            user.emailVerifyCodeExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+            await user.save();
+
+            // Send verification email with new code
+            const emailSent = await sendEmailData('email_verification', user.email, {
+                username: user.username,
+                verificationCode: verificationCode,
+                supportEmail: 'support@quantumrobots.com'
+            });
+
+            if (!emailSent) {
+                console.error('Failed to resend verification email', {
+                    email: user.email,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to send verification email'
+                });
+            }
+
+            console.info('Verification email resent successfully', {
+                userId: user._id,
+                email: user.email,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            res.status(200).json({
+                success: true,
+                message: 'Verification code resent to your email.',
+                requiresEmailVerification: true,
+                email: user.email,
+                pendingTOTPEnable: user.pendingTOTPEnable || false,
+                requiresTOTPSetup: user.pendingTOTPEnable || false
+            });
+
+        } catch (error) {
+            console.error('Resend verify email error', {
+                error: error.message,
+                stack: error.stack,
+                usernameOrEmail,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({
+                success: false,
+                message: 'Server error while resending verification email'
+            });
+        }
+    }),
+];
+
+
 export const login = [
     setSecurityHeaders,
     validate([
@@ -1092,6 +1218,159 @@ export const verifyDeviceCode = [
             return res.status(500).json({
                 success: false, // ✅ ADD THIS
                 message: 'Server error during device verification'
+            });
+        }
+    }),
+];
+
+
+export const resendVerifyDevice = [
+    setSecurityHeaders,
+    validate([
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
+        body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
+    ]),
+    asyncHandler(async (req, res) => {
+        const { usernameOrEmail, fingerprint } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
+
+        console.info('Resend device verification route accessed', {
+            body: { usernameOrEmail, fingerprint },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            // Find active user by username or email
+            const user = await Users.findOne({
+                $or: [
+                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                ],
+                isActive: true // Only active users can have device verification
+            });
+
+            if (!user) {
+                console.warn('User not found for device verification resend', {
+                    usernameOrEmail,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            // Check if device is already verified
+            if (user.isDeviceVerified(fingerprint)) {
+                console.warn('Device already verified', {
+                    userId: user._id,
+                    fingerprint,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                return res.status(400).json({
+                    success: false,
+                    message: 'This device is already verified'
+                });
+            }
+
+            // Find existing unverified device or create new one
+            const existingDeviceIndex = user.devices.findIndex(device =>
+                device.fingerprint === fingerprint &&
+                device.status === 'NOT CONFIRMED'
+            );
+
+            // Generate new verification code
+            const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+            const verificationCodeExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+            const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
+
+            if (existingDeviceIndex !== -1) {
+                // Update existing device verification
+                user.devices[existingDeviceIndex].verificationCode = verificationCode;
+                user.devices[existingDeviceIndex].verificationCodeExpires = verificationCodeExpires;
+                user.devices[existingDeviceIndex].expiresAt = expiresAt;
+                user.devices[existingDeviceIndex].deviceInfo = deviceInfo;
+                user.devices[existingDeviceIndex].ip = ip;
+                user.devices[existingDeviceIndex].country = country;
+                user.devices[existingDeviceIndex].createdAt = new Date();
+            } else {
+                // Add new device verification
+                user.devices.push({
+                    fingerprint,
+                    status: 'NOT CONFIRMED',
+                    deviceInfo,
+                    ip,
+                    country,
+                    verificationCode,
+                    verificationCodeExpires,
+                    createdAt: new Date(),
+                    expiresAt
+                });
+            }
+
+            await user.save();
+
+            // Send device verification email
+            const emailSent = await sendEmailData('device_verification', user.email, {
+                username: user.username,
+                deviceInfo: deviceInfo,
+                ip: ip,
+                country: country,
+                timestamp: new Date().toISOString(),
+                verificationCode: verificationCode,
+                supportEmail: 'support@quantumrobots.com'
+            });
+
+            if (!emailSent) {
+                console.error('Failed to send device verification email', {
+                    email: user.email,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to send verification email'
+                });
+            }
+
+            console.info('Device verification code resent successfully', {
+                userId: user._id,
+                email: user.email,
+                fingerprint,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            res.status(200).json({
+                success: true,
+                message: 'Device verification code resent successfully. Please check your email.',
+                requiresDeviceVerification: true,
+                fingerprint: fingerprint
+            });
+
+        } catch (error) {
+            console.error('Resend device verification error', {
+                error: error.message,
+                stack: error.stack,
+                usernameOrEmail,
+                fingerprint,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({
+                success: false,
+                message: 'Server error while resending device verification code'
             });
         }
     }),
