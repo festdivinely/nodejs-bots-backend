@@ -746,7 +746,7 @@ export const verifyEmail = [
             // Update device status and user activation
             user.devices = user.devices.map(device => ({
                 ...device.toObject(),
-                status: 'VERIFIED', // ✅ FIX THIS (was 'YES IT ME')
+                status: 'YES IT ME',
                 verifiedAt: new Date(),
                 expiresAt: undefined
             }));
