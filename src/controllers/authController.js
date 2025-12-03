@@ -140,6 +140,7 @@ const sendEmailData = async (emailType, to, data) => {
     }
 };
 
+// In your backend authController.js, update the register function
 export const register = [
     setSecurityHeaders,
     validate([
@@ -149,15 +150,29 @@ export const register = [
         body('fingerprint').custom((value) => DEV_MODE || value).withMessage('Device fingerprint is required'),
     ]),
     asyncHandler(async (req, res) => {
-        const { username, email, password, fingerprint, enableTOTP } = req.body;
-        const { ip, country, deviceInfo } = getClientInfo(req);
+        const { username, email, password, fingerprint, enableTOTP, deviceInfo, ipAddress, country } = req.body;
+        const backendClientInfo = getClientInfo(req); // This gets IP, country from request
 
-        console.info('Register route accessed', {
-            body: { username, email, password: '[REDACTED]', fingerprint, enableTOTP },
-            ip,
-            country,
-            deviceInfo,
+        console.info('🔵 BACKEND - REGISTRATION REQUEST DETAILS:', {
             timestamp: new Date().toISOString(),
+            userData: {
+                username,
+                email,
+                enableTOTP: enableTOTP || false,
+                fingerprint
+            },
+            deviceInfoFromFrontend: deviceInfo || 'Not provided',
+            ipAddressFromFrontend: ipAddress || 'Not provided',
+            countryFromFrontend: country || 'Not provided',
+            backendDetectedInfo: {
+                ip: backendClientInfo.ip,
+                country: backendClientInfo.country,
+                deviceInfo: backendClientInfo.deviceInfo
+            },
+            headers: {
+                'user-agent': req.headers['user-agent'],
+                'x-forwarded-for': req.headers['x-forwarded-for']
+            }
         });
 
         try {
@@ -165,7 +180,13 @@ export const register = [
 
             // User exists but is NOT verified - resend verification code
             if (existingUser && !existingUser.isActive) {
-                console.info('Unverified user attempting to register again', { email, username, ip, country, deviceInfo });
+                console.info('🟡 Unverified user attempting to register again', {
+                    email,
+                    username,
+                    ip: backendClientInfo.ip,
+                    country: backendClientInfo.country,
+                    deviceInfo: backendClientInfo.deviceInfo
+                });
 
                 // GENERATE 6-DIGIT CODE (not token)
                 const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -188,7 +209,12 @@ export const register = [
                 });
 
                 if (!emailSent) {
-                    console.error('Failed to resend verification email', { email, ip, country, deviceInfo });
+                    console.error('❌ Failed to resend verification email', {
+                        email,
+                        ip: backendClientInfo.ip,
+                        country: backendClientInfo.country,
+                        deviceInfo: backendClientInfo.deviceInfo
+                    });
                     return res.status(500).json({ message: 'Failed to send verification email' });
                 }
 
@@ -205,7 +231,13 @@ export const register = [
 
             // User exists and IS verified - cannot register again
             if (existingUser) {
-                console.warn('Verified user already exists', { email, username, ip, country, deviceInfo });
+                console.warn('🔴 Verified user already exists', {
+                    email,
+                    username,
+                    ip: backendClientInfo.ip,
+                    country: backendClientInfo.country,
+                    deviceInfo: backendClientInfo.deviceInfo
+                });
                 return res.status(400).json({
                     success: false,
                     message: 'User with this email or username already exists',
@@ -232,16 +264,25 @@ export const register = [
 
             // ✅ DEVICE IS NOW CREATED WITH THE FINGERPRINT FROM FRONTEND
             user.devices.push({
-                fingerprint: fingerprint, // ✅ THIS WILL NOW BE PROVIDED
+                fingerprint: fingerprint,
                 status: 'NOT CONFIRMED',
-                deviceInfo: deviceInfo,
-                ip: ip,
-                country: country,
+                deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : backendClientInfo.deviceInfo,
+                ip: backendClientInfo.ip, // Use backend detected IP
+                country: backendClientInfo.country, // Use backend detected country
                 createdAt: new Date(),
                 expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
             });
 
             await user.save();
+
+            console.info('🟢 New user created:', {
+                userId: user._id,
+                username,
+                email,
+                deviceInfo: deviceInfo || backendClientInfo.deviceInfo,
+                ip: backendClientInfo.ip,
+                country: backendClientInfo.country
+            });
 
             // Send verification email with CODE
             const emailSent = await sendEmailData('email_verification', email, {
@@ -251,7 +292,12 @@ export const register = [
             });
 
             if (!emailSent) {
-                console.error('Failed to send verification email via external service', { email, ip, country, deviceInfo });
+                console.error('❌ Failed to send verification email via external service', {
+                    email,
+                    ip: backendClientInfo.ip,
+                    country: backendClientInfo.country,
+                    deviceInfo: backendClientInfo.deviceInfo
+                });
                 return res.status(500).json({
                     success: false,
                     message: 'Failed to send verification email'
@@ -267,13 +313,13 @@ export const register = [
                 requiresTOTPSetup: enableTOTP || false
             });
         } catch (error) {
-            console.error('Registration error', {
+            console.error('🔴 Registration error', {
                 error: error.message,
                 stack: error.stack,
                 email,
-                ip,
-                country,
-                deviceInfo,
+                ip: backendClientInfo.ip,
+                country: backendClientInfo.country,
+                deviceInfo: backendClientInfo.deviceInfo,
                 timestamp: new Date().toISOString(),
             });
             res.status(500).json({
