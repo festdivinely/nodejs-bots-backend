@@ -621,7 +621,7 @@ export const verifyTOTPSetupLogin = [
                 secret: user.twoFactorSecret,
                 encoding: 'base32',
                 token: totpCode,
-                window: 1
+                window: 3
             });
 
             if (!verified) {
