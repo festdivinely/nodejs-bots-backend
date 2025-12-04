@@ -1013,7 +1013,6 @@ export const login = [
             if (!user.isActive) {
                 console.warn('Email not verified', { usernameOrEmail, ip, country, deviceInfo });
 
-                // ✅ GENERATE 6-DIGIT CODE (not token)
                 const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
                 user.emailVerifyCode = verificationCode;
                 user.emailVerifyCodeExpires = new Date(Date.now() + 15 * 60 * 1000);
@@ -1021,7 +1020,7 @@ export const login = [
 
                 const emailSent = await sendEmailData('email_verification', user.email, {
                     username: user.username,
-                    verificationCode: verificationCode, // 6-digit code
+                    verificationCode: verificationCode,
                     supportEmail: 'support@quantumrobots.com'
                 });
 
@@ -1092,27 +1091,29 @@ export const login = [
                 });
             }
 
-            // Handle TOTP logic AFTER device verification
-            if ((user.twoFactorEnabled || user.pendingTOTPEnable) && !DEV_MODE) {
-                // TOTP is enabled but not setup (pending setup from signup)
-                if (!user.twoFactorSetupCompleted) {
-                    console.info('TOTP enabled but not setup - requiring setup', {
-                        userId: user._id,
-                        ip,
-                        country,
-                        deviceInfo
-                    });
+            // ✅ FIXED TOTP LOGIC: Handle TOTP setup during login
+            if (user.pendingTOTPEnable && !user.twoFactorSetupCompleted) {
+                // User registered with TOTP but hasn't completed setup
+                console.info('TOTP enabled during registration but not setup - prompting setup during login', {
+                    userId: user._id,
+                    ip,
+                    country,
+                    deviceInfo
+                });
 
-                    return res.status(200).json({
-                        success: false,
-                        message: 'TOTP setup required. Please complete TOTP setup to continue.',
-                        requiresTOTPSetup: true,
-                        usernameOrEmail: usernameOrEmail
-                    });
-                }
+                return res.status(200).json({
+                    success: false,
+                    message: 'TOTP setup required. You enabled TOTP during registration. Please complete setup now.',
+                    requiresTOTPSetup: true, // ✅ This tells frontend to go to TOTP setup
+                    usernameOrEmail: usernameOrEmail,
+                    fingerprint: fingerprint
+                });
+            }
 
-                // TOTP is enabled and setup - require TOTP code in separate verification step
-                console.info('TOTP enabled and setup - requiring verification', {
+            // ✅ Handle TOTP verification for users who have completed setup
+            if (user.twoFactorEnabled && user.twoFactorSetupCompleted && !DEV_MODE) {
+                // User has TOTP fully set up - require TOTP code
+                console.info('TOTP enabled and setup - requiring verification code', {
                     userId: user._id,
                     ip,
                     country,
@@ -1122,8 +1123,9 @@ export const login = [
                 return res.status(200).json({
                     success: false,
                     message: 'TOTP code required for login',
-                    requiresTOTPCode: true, // ✅ FIXED: was requiresTOTPVerification
-                    usernameOrEmail: usernameOrEmail
+                    requiresTOTPCode: true,
+                    usernameOrEmail: usernameOrEmail,
+                    fingerprint: fingerprint
                 });
             }
 
