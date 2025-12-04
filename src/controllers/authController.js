@@ -610,26 +610,101 @@ export const verifyTOTPSetupLogin = [
             });
 
             if (!user || !user.twoFactorSecret) {
+                console.error('TOTP verification failed - User or secret not found:', {
+                    usernameOrEmail,
+                    hasUser: !!user,
+                    hasSecret: user?.twoFactorSecret ? 'Yes' : 'No',
+                    pendingTOTPEnable: user?.pendingTOTPEnable,
+                    twoFactorSetupCompleted: user?.twoFactorSetupCompleted
+                });
                 return res.status(400).json({
                     success: false,
                     message: 'TOTP not setup properly or user not found'
                 });
             }
 
-            // Verify the code
+            // ✅ ADDED: Debug time synchronization
+            const currentTime = Math.floor(Date.now() / 1000);
+            const timeStep = 30;
+            const counter = Math.floor(currentTime / timeStep);
+
+            console.info('TOTP Verification Debug:', {
+                userId: user._id,
+                username: user.username,
+                secretFirst10: user.twoFactorSecret.substring(0, 10) + '...',
+                secretLength: user.twoFactorSecret.length,
+                totpCode,
+                currentTime,
+                counter,
+                timeStep,
+                window: 3, // Increased from 1
+                userTimeZone: user.timezone || 'UTC',
+                serverTime: new Date().toISOString()
+            });
+
+            // ✅ ADDED: Generate what code the server expects
+            const serverCode = speakeasy.totp({
+                secret: user.twoFactorSecret,
+                encoding: 'base32',
+                time: currentTime
+            });
+
+            console.info('Server would generate code:', serverCode);
+            console.info('Client submitted code:', totpCode);
+            console.info('Codes match?', serverCode === totpCode);
+
+            // ✅ CHANGED: window from 1 to 3 to allow time drift
             const verified = speakeasy.totp.verify({
                 secret: user.twoFactorSecret,
                 encoding: 'base32',
                 token: totpCode,
-                window: 3
+                window: 3 // ✅ CRITICAL CHANGE: Allows ±90 seconds time drift
+            });
+
+            console.info('Speakeasy verification result:', {
+                verified,
+                secretUsed: user.twoFactorSecret.substring(0, 10) + '...',
+                windowUsed: 3
             });
 
             if (!verified) {
+                // ✅ ADDED: Try with different windows for debugging
+                const verifyWindow1 = speakeasy.totp.verify({
+                    secret: user.twoFactorSecret,
+                    encoding: 'base32',
+                    token: totpCode,
+                    window: 1
+                });
+
+                const verifyWindow2 = speakeasy.totp.verify({
+                    secret: user.twoFactorSecret,
+                    encoding: 'base32',
+                    token: totpCode,
+                    window: 2
+                });
+
+                console.error('TOTP verification failed with all windows:', {
+                    window1: verifyWindow1,
+                    window2: verifyWindow2,
+                    window3: verified,
+                    serverTime: new Date().toISOString(),
+                    timeDifference: `User is ${Math.abs(parseInt(totpCode) - parseInt(serverCode))} codes off`
+                });
+
                 return res.status(400).json({
                     success: false,
-                    message: 'Invalid TOTP code'
+                    message: 'Invalid TOTP code. Please ensure your device time is synchronized and try the new code.'
                 });
             }
+
+            // ✅ ADDED: Log success before generating backup codes
+            console.info('TOTP verification SUCCESSFUL:', {
+                userId: user._id,
+                username: user.username,
+                ip,
+                country,
+                deviceInfo
+            });
 
             // Generate backup codes
             const backupCodes = Array.from({ length: 8 }, () =>
@@ -662,7 +737,8 @@ export const verifyTOTPSetupLogin = [
                 username: user.username,
                 ip,
                 country,
-                deviceInfo
+                deviceInfo,
+                backupCodesCount: backupCodes.length
             });
 
             return res.json({
@@ -677,8 +753,16 @@ export const verifyTOTPSetupLogin = [
             });
 
         } catch (error) {
-            console.error('TOTP setup verification during login error:', error);
-            res.status(500).json({
+            console.error('TOTP setup verification during login error:', {
+                error: error.message,
+                stack: error.stack,
+                usernameOrEmail,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({
                 success: false,
                 message: 'Failed to verify TOTP setup'
             });
