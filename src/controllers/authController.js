@@ -924,6 +924,111 @@ export const verifyTOTPSetupLogin = [
     })
 ];
 
+// For verifying existing TOTP during login (user already has TOTP set up)
+export const verifyTOTPLogin = [
+    validate([
+        body('totpCode').isLength({ min: 6, max: 6 }).withMessage('TOTP code must be 6 digits'),
+        body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
+        body('fingerprint').notEmpty().withMessage('Device fingerprint is required'),
+    ]),
+    asyncHandler(async (req, res) => {
+        const { totpCode, usernameOrEmail, fingerprint } = req.body;
+        const { ip, country, deviceInfo } = getClientInfo(req);
+
+        console.info('Verify TOTP during login route accessed', {
+            body: { usernameOrEmail, fingerprint, totpCode: '[REDACTED]' },
+            ip,
+            country,
+            deviceInfo,
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const user = await Users.findOne({
+                $or: [
+                    { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                    { username: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
+                ],
+                isActive: true,
+                twoFactorEnabled: true,
+                twoFactorSetupCompleted: true
+            });
+
+            if (!user || !user.twoFactorSecret) {
+                console.error('TOTP verification failed - User or secret not found:', {
+                    usernameOrEmail,
+                    hasUser: !!user,
+                    hasSecret: user?.twoFactorSecret ? 'Yes' : 'No',
+                    twoFactorEnabled: user?.twoFactorEnabled,
+                    twoFactorSetupCompleted: user?.twoFactorSetupCompleted
+                });
+                return res.status(400).json({
+                    success: false,
+                    message: 'TOTP not properly configured'
+                });
+            }
+
+            // Verify TOTP code
+            const verified = speakeasy.totp.verify({
+                secret: user.twoFactorSecret,
+                encoding: 'base32',
+                token: totpCode,
+                window: 10 // Allow time drift
+            });
+
+            if (!verified) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid TOTP code. Please try again.'
+                });
+            }
+
+            // Complete login
+            user.lastLogin = new Date();
+            user.lastLoginIp = ip;
+            user.lastLoginDevice = deviceInfo;
+            await user.cleanSessions();
+
+            const accessToken = await user.generateAccessToken();
+            const refreshToken = await user.generateRefreshToken(fingerprint, ip, country, deviceInfo);
+
+            await user.save();
+
+            console.info('TOTP verification successful during login', {
+                userId: user._id,
+                username: user.username,
+                ip,
+                country,
+                deviceInfo
+            });
+
+            return res.json({
+                success: true,
+                message: 'Login successful',
+                accessToken,
+                refreshToken,
+                csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+                user: sanitizeUser(user)
+            });
+
+        } catch (error) {
+            console.error('TOTP verification during login error:', {
+                error: error.message,
+                stack: error.stack,
+                usernameOrEmail,
+                ip,
+                country,
+                deviceInfo,
+                timestamp: new Date().toISOString(),
+            });
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to verify TOTP code'
+            });
+        }
+    })
+];
+
 // Disable TOTP
 // Updated disableTOTP controller using the model method
 export const disableTOTP = [

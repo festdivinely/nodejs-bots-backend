@@ -16,11 +16,12 @@ import {
     cleanupExpiredData,
     setupTOTP,
     setupTOTPLogin,
+    verifyTOTPLogin,
     verifyTOTPSetupLogin,
     verifyTOTPSetup,
     disableTOTP,
     resendVerifyEmail,
-    resendVerifyDevice // ✅ ADD THIS IMPORT
+    resendVerifyDevice
 } from "../controllers/authController.js";
 
 import { protect, requireRole, csrfProtect } from "../middleware/authMiddleware.js";
@@ -40,13 +41,14 @@ router.post("/setup-totp", logRequest, protect, csrfProtect, setupTOTP);
 router.post("/setup-totp-login", logRequest, loginLimiter, setupTOTPLogin);
 router.post("/verify-totp-setup", logRequest, protect, csrfProtect, verifyTOTPSetup);
 router.post("/verify-totp-setup-login", logRequest, loginLimiter, verifyTOTPSetupLogin);
+router.post('/verify-totp-login', logRequest, loginLimiter, verifyTOTPLogin);
 router.post("/disable-totp", logRequest, protect, csrfProtect, disableTOTP);
 
 // Public routes
 router.post("/register", logRequest, registerLimiter, register);
 router.post("/login", logRequest, loginLimiter, login);
 router.post("/verify-device", logRequest, loginLimiter, verifyDeviceCode);
-router.post("/resend-verify-device", logRequest, loginLimiter, resendVerifyDevice); // ✅ ADD THIS ROUTE
+router.post("/resend-verify-device", logRequest, loginLimiter, resendVerifyDevice);
 router.post("/verify-email", logRequest, verifyLimiter, verifyEmail);
 router.post('/resend-verify-email', logRequest, verifyLimiter, resendVerifyEmail);
 router.post("/request-password-reset", logRequest, resetLimiter, requestPasswordReset);
