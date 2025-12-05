@@ -43,14 +43,28 @@ export const trimRequestBody = (req, res, next) => {
         return value;
     };
 
-    // Process request body
+    // Process request body - this can be modified
     if (req.body && typeof req.body === 'object') {
         req.body = cleanValue(req.body);
     }
 
-    // Process query parameters
+    // Process query parameters - MODIFIED: Don't reassign req.query directly
     if (req.query && typeof req.query === 'object') {
-        req.query = cleanValue(req.query);
+        // Clean the query object in place instead of reassigning
+        const query = req.query;
+        Object.keys(query).forEach(key => {
+            query[key] = cleanValue(query[key]);
+        });
+        // No reassignment of req.query - just modify its properties
+    }
+
+    // Process URL parameters - MODIFIED: Don't reassign req.params directly
+    if (req.params && typeof req.params === 'object') {
+        // Clean the params object in place instead of reassigning
+        const params = req.params;
+        Object.keys(params).forEach(key => {
+            params[key] = cleanValue(params[key]);
+        });
     }
 
     next();
