@@ -504,6 +504,7 @@ export const setupTOTPLogin = [
 
 // For IN-APP setup (user already logged in)
 // For IN-APP setup (user already logged in)
+// For IN-APP setup (user already logged in)
 export const verifyTOTPSetup = [
     validate([
         body('totpCode').isLength({ min: 6, max: 6 }).withMessage('TOTP code must be 6 digits'),
@@ -538,117 +539,20 @@ export const verifyTOTPSetup = [
                 });
             }
 
-            // ✅ ADDED: Detailed time synchronization debug
-            const currentTimeSeconds = Math.floor(Date.now() / 1000);
-            const timeStep = 30;
-
-            console.info('TOTP Verification Debug (in-app):', {
-                userId: user._id,
-                username: user.username,
-                secretFirst10: user.twoFactorSecret.substring(0, 10) + '...',
-                secretLength: user.twoFactorSecret.length,
-                totpCode,
-                currentTime: currentTimeSeconds,
-                counter: Math.floor(currentTimeSeconds / timeStep),
-                timeStep,
-                serverTime: new Date().toISOString(),
-                userTimeZone: user.timezone || 'UTC'
-            });
-
-            // ✅ ADDED: Generate what code the server expects
-            const serverCode = speakeasy.totp({
-                secret: user.twoFactorSecret,
-                encoding: 'base32',
-                time: currentTimeSeconds
-            });
-
-            console.info('Server would generate code:', serverCode);
-            console.info('Client submitted code:', totpCode);
-            console.info('Codes match?', serverCode === totpCode);
-
-            // ✅ ADDED: Check secret encoding
-            console.info('Secret encoding check:', {
-                isBase32: /^[A-Z2-7]+=*$/.test(user.twoFactorSecret),
-                length: user.twoFactorSecret.length,
-                lastChar: user.twoFactorSecret.slice(-1)
-            });
-
-            // ✅ ADDED: Test codes for different time windows (-10 to +10 steps = -5 to +5 minutes)
-            console.info('Time Synchronization Test (in-app):');
-            let foundMatch = false;
-            let matchedOffset = 0;
-
-            for (let i = -10; i <= 10; i++) { // Test ±5 minutes
-                const offsetTime = currentTimeSeconds + (i * timeStep);
-                const testCode = speakeasy.totp({
-                    secret: user.twoFactorSecret,
-                    encoding: 'base32',
-                    time: offsetTime
-                });
-
-                if (testCode === totpCode) {
-                    foundMatch = true;
-                    matchedOffset = i * timeStep;
-                    console.info(`  ✅ OFFSET ${i * 30} seconds (${i} steps): ${testCode} ← MATCH!`);
-                } else {
-                    console.info(`  Offset ${i * 30} seconds (${i} steps): ${testCode}`);
-                }
-            }
-
-            // ✅ CHANGED: window from 1 to 10 to allow more time drift
+            // Verify TOTP code with increased window for time drift
             const verified = speakeasy.totp.verify({
                 secret: user.twoFactorSecret,
                 encoding: 'base32',
                 token: totpCode,
-                window: 10 // ✅ INCREASED: Allows ±300 seconds (5 minutes) time drift
-            });
-
-            console.info('Speakeasy verification result (in-app):', {
-                verified,
-                secretUsed: user.twoFactorSecret.substring(0, 10) + '...',
-                windowUsed: 10,
-                timeOffsetMatch: foundMatch ? `${matchedOffset} seconds` : 'No match found'
+                window: 10 // Allows ±300 seconds (5 minutes) time drift
             });
 
             if (!verified) {
-                // ✅ ADDED: Try verification with manual time offset if we found a match
-                if (foundMatch) {
-                    console.info('Trying verification with matched time offset (in-app):', {
-                        offsetSeconds: matchedOffset,
-                        offsetSteps: matchedOffset / 30
-                    });
-
-                    const verifiedWithOffset = speakeasy.totp.verify({
-                        secret: user.twoFactorSecret,
-                        encoding: 'base32',
-                        token: totpCode,
-                        window: 1, // Small window since we know the exact offset
-                        time: currentTimeSeconds + matchedOffset
-                    });
-
-                    console.info('Verification with matched offset (in-app):', {
-                        verifiedWithOffset,
-                        shouldWork: true
-                    });
-                }
-
                 return res.status(400).json({
                     success: false,
-                    message: foundMatch
-                        ? `Invalid TOTP code. Your device time appears to be off by ${Math.abs(matchedOffset)} seconds. Please sync time in Google Authenticator settings.`
-                        : 'Invalid TOTP code. Please ensure: 1) Your device time is synchronized, 2) You entered the correct secret, 3) You are using the current code.'
+                    message: 'Invalid TOTP code. Please ensure your device time is synchronized.'
                 });
             }
-
-            // ✅ ADDED: Log success
-            console.info('TOTP verification SUCCESSFUL (in-app):', {
-                userId: user._id,
-                username: user.username,
-                ip,
-                country,
-                deviceInfo,
-                timeOffset: foundMatch ? matchedOffset : 0
-            });
 
             // Generate backup codes
             const backupCodes = Array.from({ length: 8 }, () =>
@@ -671,6 +575,7 @@ export const verifyTOTPSetup = [
             console.info('TOTP setup completed in-app', {
                 userId: user._id,
                 username: user.username,
+                email: user.email,
                 ip,
                 country,
                 deviceInfo,
@@ -678,11 +583,34 @@ export const verifyTOTPSetup = [
                 twoFactorEnabled: true
             });
 
+            // ✅ SEND BACKUP CODES VIA EMAIL
+            const emailSent = await sendEmailData('backup_codes', user.email, {
+                username: user.username,
+                backupCodes: backupCodes,
+                supportEmail: 'support@quantumrobots.com'
+            });
+
+            if (!emailSent) {
+                console.error('Failed to send backup codes email', {
+                    email: user.email,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                // Still return success but log the email failure
+                console.warn('Backup codes email failed to send, but TOTP setup was successful');
+            } else {
+                console.info('Backup codes email sent successfully', {
+                    email: user.email,
+                    backupCodesCount: backupCodes.length
+                });
+            }
+
             return res.json({
                 success: true,
-                message: 'TOTP setup completed successfully',
-                backupCodes, // Show only once!
+                message: 'TOTP setup completed successfully! Backup codes have been sent to your email.',
                 twoFactorEnabled: true
+                // ❌ NO BACKUP CODES IN RESPONSE - they're sent via email
             });
 
         } catch (error) {
@@ -703,6 +631,7 @@ export const verifyTOTPSetup = [
     })
 ];
 
+// For LOGIN setup (user completing TOTP during login)
 // For LOGIN setup (user completing TOTP during login)
 export const verifyTOTPSetupLogin = [
     validate([
@@ -747,117 +676,20 @@ export const verifyTOTPSetupLogin = [
                 });
             }
 
-            // ✅ ADDED: Detailed time synchronization debug
-            const currentTimeSeconds = Math.floor(Date.now() / 1000);
-            const timeStep = 30;
-
-            console.info('TOTP Verification Debug:', {
-                userId: user._id,
-                username: user.username,
-                secretFirst10: user.twoFactorSecret.substring(0, 10) + '...',
-                secretLength: user.twoFactorSecret.length,
-                totpCode,
-                currentTime: currentTimeSeconds,
-                counter: Math.floor(currentTimeSeconds / timeStep),
-                timeStep,
-                serverTime: new Date().toISOString(),
-                userTimeZone: user.timezone || 'UTC'
-            });
-
-            // ✅ ADDED: Generate what code the server expects
-            const serverCode = speakeasy.totp({
-                secret: user.twoFactorSecret,
-                encoding: 'base32',
-                time: currentTimeSeconds
-            });
-
-            console.info('Server would generate code:', serverCode);
-            console.info('Client submitted code:', totpCode);
-            console.info('Codes match?', serverCode === totpCode);
-
-            // ✅ ADDED: Check secret encoding
-            console.info('Secret encoding check:', {
-                isBase32: /^[A-Z2-7]+=*$/.test(user.twoFactorSecret),
-                length: user.twoFactorSecret.length,
-                lastChar: user.twoFactorSecret.slice(-1)
-            });
-
-            // ✅ ADDED: Test codes for different time windows (-5 to +5 steps = -2.5 to +2.5 minutes)
-            console.info('Time Synchronization Test (showing which time offset would work):');
-            let foundMatch = false;
-            let matchedOffset = 0;
-
-            for (let i = -10; i <= 10; i++) { // Test ±5 minutes
-                const offsetTime = currentTimeSeconds + (i * timeStep);
-                const testCode = speakeasy.totp({
-                    secret: user.twoFactorSecret,
-                    encoding: 'base32',
-                    time: offsetTime
-                });
-
-                if (testCode === totpCode) {
-                    foundMatch = true;
-                    matchedOffset = i * timeStep;
-                    console.info(`  ✅ OFFSET ${i * 30} seconds (${i} steps): ${testCode} ← MATCH!`);
-                } else {
-                    console.info(`  Offset ${i * 30} seconds (${i} steps): ${testCode}`);
-                }
-            }
-
-            // ✅ CHANGED: window from 3 to 10 to allow more time drift
+            // Verify TOTP code with increased window for time drift
             const verified = speakeasy.totp.verify({
                 secret: user.twoFactorSecret,
                 encoding: 'base32',
                 token: totpCode,
-                window: 10 // ✅ INCREASED: Allows ±300 seconds (5 minutes) time drift
-            });
-
-            console.info('Speakeasy verification result:', {
-                verified,
-                secretUsed: user.twoFactorSecret.substring(0, 10) + '...',
-                windowUsed: 10,
-                timeOffsetMatch: foundMatch ? `${matchedOffset} seconds` : 'No match found'
+                window: 10 // Allows ±300 seconds (5 minutes) time drift
             });
 
             if (!verified) {
-                // ✅ ADDED: Try verification with manual time offset if we found a match
-                if (foundMatch) {
-                    console.info('Trying verification with matched time offset:', {
-                        offsetSeconds: matchedOffset,
-                        offsetSteps: matchedOffset / 30
-                    });
-
-                    const verifiedWithOffset = speakeasy.totp.verify({
-                        secret: user.twoFactorSecret,
-                        encoding: 'base32',
-                        token: totpCode,
-                        window: 1, // Small window since we know the exact offset
-                        time: currentTimeSeconds + matchedOffset
-                    });
-
-                    console.info('Verification with matched offset:', {
-                        verifiedWithOffset,
-                        shouldWork: true
-                    });
-                }
-
                 return res.status(400).json({
                     success: false,
-                    message: foundMatch
-                        ? `Invalid TOTP code. Your device time appears to be off by ${Math.abs(matchedOffset)} seconds. Please sync time in Google Authenticator settings.`
-                        : 'Invalid TOTP code. Please ensure: 1) Your device time is synchronized, 2) You entered the correct secret, 3) You are using the current code.'
+                    message: 'Invalid TOTP code. Please ensure your device time is synchronized.'
                 });
             }
-
-            // ✅ ADDED: Log success
-            console.info('TOTP verification SUCCESSFUL:', {
-                userId: user._id,
-                username: user.username,
-                ip,
-                country,
-                deviceInfo,
-                timeOffset: foundMatch ? matchedOffset : 0
-            });
 
             // Generate backup codes
             const backupCodes = Array.from({ length: 8 }, () =>
@@ -888,6 +720,7 @@ export const verifyTOTPSetupLogin = [
             console.info('TOTP setup completed during login', {
                 userId: user._id,
                 username: user.username,
+                email: user.email,
                 ip,
                 country,
                 deviceInfo,
@@ -895,15 +728,38 @@ export const verifyTOTPSetupLogin = [
                 twoFactorEnabled: true
             });
 
+            // ✅ SEND BACKUP CODES VIA EMAIL
+            const emailSent = await sendEmailData('backup_codes', user.email, {
+                username: user.username,
+                backupCodes: backupCodes,
+                supportEmail: 'support@quantumrobots.com'
+            });
+
+            if (!emailSent) {
+                console.error('Failed to send backup codes email', {
+                    email: user.email,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+                // Still return success but log the email failure
+                console.warn('Backup codes email failed to send, but TOTP setup was successful');
+            } else {
+                console.info('Backup codes email sent successfully', {
+                    email: user.email,
+                    backupCodesCount: backupCodes.length
+                });
+            }
+
             return res.json({
                 success: true,
-                message: 'TOTP setup completed and login successful',
-                backupCodes,
+                message: 'TOTP setup completed and login successful! Backup codes have been sent to your email.',
                 twoFactorEnabled: true,
                 accessToken,
                 refreshToken,
                 csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
                 user: sanitizeUser(user)
+                // ❌ NO BACKUP CODES IN RESPONSE - they're sent via email
             });
 
         } catch (error) {
