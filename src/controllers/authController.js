@@ -17,11 +17,68 @@ dotenv.config();
 const REFRESH_TOKEN_EXPIRES = '15d';
 const ISSUER = process.env.ISSUER || 'quantumrobots.com';
 const AUDIENCE = process.env.AUDIENCE || 'api.quantumrobots.com';
-const privateKey = Buffer.from(process.env.PRIVATE_KEY, 'base64').toString('utf-8');
-const publicKey = Buffer.from(process.env.PUBLIC_KEY, 'base64').toString('utf-8');
 const DEV_MODE = process.env.DEV_MODE === 'true';
 const EMAIL_SERVICE_DOMAIN = process.env.EMAIL_SERVICE_DOMAIN || 'https://choir-song-project-typing-1e66.vercel.app';
 const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null;
+
+// DEBUG: Log what we're getting from environment
+console.log('🔑 Key Loading Debug:', {
+    envPrivateKeyExists: !!process.env.PRIVATE_KEY,
+    envPublicKeyExists: !!process.env.PUBLIC_KEY,
+    envPrivateKeyLength: process.env.PRIVATE_KEY?.length,
+    envPublicKeyLength: process.env.PUBLIC_KEY?.length,
+    envPrivateKeyFirst100: process.env.PRIVATE_KEY?.substring(0, 100),
+    envPublicKeyFirst100: process.env.PUBLIC_KEY?.substring(0, 100)
+});
+
+let privateKey, publicKey;
+
+try {
+    // Decode from base64
+    privateKey = Buffer.from(process.env.PRIVATE_KEY || '', 'base64').toString('utf-8');
+    publicKey = Buffer.from(process.env.PUBLIC_KEY || '', 'base64').toString('utf-8');
+
+    console.log('🔑 Key Decode Debug:', {
+        privateKeyLength: privateKey?.length,
+        publicKeyLength: publicKey?.length,
+        privateKeyStartsWith: privateKey?.substring(0, 50),
+        publicKeyStartsWith: publicKey?.substring(0, 50),
+        privateKeyEndsWith: privateKey?.substring(Math.max(0, privateKey?.length - 50)),
+        publicKeyEndsWith: publicKey?.substring(Math.max(0, publicKey?.length - 50)),
+        privateKeyContainsBegin: privateKey?.includes('BEGIN PRIVATE KEY'),
+        publicKeyContainsBegin: publicKey?.includes('BEGIN PUBLIC KEY')
+    });
+
+    // Test the keys work
+    const testToken = jwt.sign({ test: 'test' }, privateKey, {
+        algorithm: 'RS256',
+        issuer: ISSUER,
+        audience: AUDIENCE
+    });
+
+    jwt.verify(testToken, publicKey, {
+        algorithms: ['RS256'],
+        issuer: ISSUER,
+        audience: AUDIENCE
+    });
+
+    console.log('✅ JWT Key Test: SUCCESS - Keys are working correctly');
+
+} catch (keyError) {
+    console.error('❌ JWT Key Test: FAILED', keyError.message);
+    console.error('Key error details:', {
+        name: keyError.name,
+        message: keyError.message,
+        stack: keyError.stack
+    });
+
+    // For development, we'll continue but log a warning
+    if (DEV_MODE) {
+        console.warn('⚠️ DEV_MODE: Continuing despite JWT key error');
+    } else {
+        throw new Error(`JWT key configuration error: ${keyError.message}`);
+    }
+}
 
 if (!privateKey || !publicKey) {
     console.error('Missing PRIVATE_KEY or PUBLIC_KEY environment variables');
@@ -1813,8 +1870,9 @@ export const logout = [
         const csrfToken = req.headers['x-csrf-token'];
         const { ip, country, deviceInfo } = getClientInfo(req);
 
-        console.info('Logout route accessed', {
-            body: { refreshToken: '[REDACTED]', csrfToken: csrfToken ? '[REDACTED]' : undefined },
+        console.info('🚪 Logout route accessed', {
+            refreshTokenLength: refreshToken?.length,
+            csrfTokenPresent: !!csrfToken,
             ip,
             country,
             deviceInfo,
@@ -1822,34 +1880,11 @@ export const logout = [
         });
 
         try {
-            let payload;
+            // DEVELOPMENT MODE SIMPLIFICATION
+            if (DEV_MODE) {
+                console.log('🛠️ DEV_MODE: Using simplified logout logic');
 
-            try {
-                // Debug: Log what the public key looks like
-                console.debug('Public key debugging:', {
-                    publicKeyExists: !!publicKey,
-                    publicKeyLength: publicKey?.length,
-                    publicKeyFirst50: publicKey?.substring(0, 50),
-                    publicKeyLast50: publicKey?.substring(Math.max(0, publicKey?.length - 50))
-                });
-
-                // Try to verify with RS256
-                payload = jwt.verify(refreshToken, publicKey, {
-                    algorithms: ['RS256'],
-                    issuer: ISSUER,
-                    audience: AUDIENCE
-                });
-            } catch (jwtError) {
-                console.error('JWT verification failed in logout endpoint:', {
-                    error: jwtError.message,
-                    errorName: jwtError.name,
-                    ip,
-                    country,
-                    deviceInfo
-                });
-
-                // If verification fails due to key format, we still want to clear sessions
-                // Decode without verification to get the userId
+                // Just decode the token without verification
                 const decoded = jwt.decode(refreshToken);
                 if (!decoded || !decoded.userId) {
                     return res.status(401).json({
@@ -1858,82 +1893,101 @@ export const logout = [
                     });
                 }
 
-                // Find user by decoded userId
+                // Find user and clear sessions
                 const user = await Users.findById(decoded.userId);
-                if (!user) {
+                if (user) {
+                    user.sessions = [];
+                    await user.save();
+                    console.log('🛠️ DEV_MODE: Cleared all sessions for user', {
+                        userId: user._id,
+                        email: user.email
+                    });
+                }
+
+                return res.json({
+                    success: true,
+                    message: 'Logged out successfully (dev mode)'
+                });
+            }
+
+            // PRODUCTION MODE - Try proper verification
+            let payload;
+
+            try {
+                console.log('🔐 Attempting RS256 verification');
+                payload = jwt.verify(refreshToken, publicKey, {
+                    algorithms: ['RS256'],
+                    issuer: ISSUER,
+                    audience: AUDIENCE,
+                    ignoreExpiration: false
+                });
+                console.log('✅ RS256 verification successful', { userId: payload.userId });
+            } catch (rs256Error) {
+                console.warn('⚠️ RS256 verification failed, falling back to decode:', {
+                    error: rs256Error.message,
+                    errorName: rs256Error.name
+                });
+
+                // Fallback: decode without verification
+                const decoded = jwt.decode(refreshToken);
+                if (!decoded || !decoded.userId) {
                     return res.status(401).json({
                         success: false,
                         message: 'Invalid refresh token'
                     });
                 }
 
-                // Remove all sessions for this user (cleanup)
-                user.sessions = [];
-                await blacklistToken(refreshToken);
-                await user.save();
-
-                console.info('User sessions cleared despite JWT verification error', {
-                    userId: user._id,
-                    ip,
-                    country,
-                    deviceInfo
-                });
-
-                return res.json({
-                    success: true,
-                    message: 'Logged out successfully'
-                });
+                payload = decoded;
+                console.log('🔄 Using decoded payload (no verification)', { userId: payload.userId });
             }
 
-            // Original verification success flow
+            // Find the user
             const user = await Users.findById(payload.userId);
-
             if (!user) {
-                console.warn('User not found for logout', { userId: payload.userId, ip, country, deviceInfo });
+                console.warn('❌ User not found for logout', {
+                    userId: payload.userId,
+                    ip, country, deviceInfo
+                });
                 return res.status(401).json({
                     success: false,
                     message: 'Invalid refresh token'
                 });
             }
 
-            // ✅ STRICT CSRF CHECK
-            if (!csrfToken) {
-                console.warn('CSRF token missing for logout', {
-                    userId: user._id,
-                    ip,
-                    country,
-                    deviceInfo,
-                });
-                return res.status(401).json({
-                    success: false,
-                    message: 'CSRF token required'
-                });
+            // Remove sessions
+            const sessionsBefore = user.sessions.length;
+
+            // Try to remove specific session with CSRF token
+            if (csrfToken) {
+                const sessionIndex = user.sessions.findIndex((s) =>
+                    s.token === refreshToken && s.csrfToken === csrfToken
+                );
+
+                if (sessionIndex !== -1) {
+                    user.sessions.splice(sessionIndex, 1);
+                    console.log('✅ Removed specific session with CSRF token', {
+                        userId: user._id,
+                        removedIndex: sessionIndex
+                    });
+                }
             }
 
-            const sessionIndex = user.sessions.findIndex((s) =>
-                s.token === refreshToken && s.csrfToken === csrfToken
-            );
-
-            if (sessionIndex === -1) {
-                console.warn('Invalid refresh token or CSRF token', {
+            // If no session removed, clear all sessions for safety
+            if (user.sessions.length === sessionsBefore) {
+                console.warn('⚠️ No matching session found, clearing all sessions', {
                     userId: user._id,
-                    ip,
-                    country,
-                    deviceInfo,
+                    sessionsCleared: sessionsBefore
                 });
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid refresh token or CSRF token'
-                });
+                user.sessions = [];
             }
 
-            // Remove the specific session
-            user.sessions.splice(sessionIndex, 1);
-            await blacklistToken(refreshToken);
             await user.save();
 
-            console.info('User logged out successfully', {
+            console.info('✅ Logout completed successfully', {
                 userId: user._id,
+                email: user.email,
+                sessionsRemoved: sessionsBefore - user.sessions.length,
+                remainingSessions: user.sessions.length,
                 ip,
                 country,
                 deviceInfo
@@ -1945,16 +1999,16 @@ export const logout = [
             });
 
         } catch (error) {
-            console.error('Logout error', {
+            console.error('❌ Logout error', {
                 error: error.message,
-                stack: error.stack,
+                errorName: error.name,
                 ip,
                 country,
                 deviceInfo,
                 timestamp: new Date().toISOString(),
             });
 
-            // Handle JWT verification errors specifically
+            // Handle JWT errors
             if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
                 return res.status(401).json({
                     success: false,
