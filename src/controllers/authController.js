@@ -1864,161 +1864,91 @@ export const refreshToken = [
 
 export const logout = [
     setSecurityHeaders,
-    validate([body('refreshToken').notEmpty().withMessage('Refresh token is required')]),
     asyncHandler(async (req, res) => {
         const { refreshToken } = req.body;
         const csrfToken = req.headers['x-csrf-token'];
         const { ip, country, deviceInfo } = getClientInfo(req);
 
-        console.info('🚪 Logout route accessed', {
+        console.info('🚪 LOGOUT - Request received', {
+            hasRefreshToken: !!refreshToken,
             refreshTokenLength: refreshToken?.length,
-            csrfTokenPresent: !!csrfToken,
+            hasCsrfToken: !!csrfToken,
             ip,
             country,
-            deviceInfo,
             timestamp: new Date().toISOString(),
         });
 
+        // If no refresh token, just return success
+        if (!refreshToken) {
+            console.warn('⚠️ LOGOUT - No refresh token provided');
+            return res.json({
+                success: true,
+                message: 'Logout completed (no token provided)'
+            });
+        }
+
         try {
-            // DEVELOPMENT MODE SIMPLIFICATION
-            if (DEV_MODE) {
-                console.log('🛠️ DEV_MODE: Using simplified logout logic');
+            let userId;
 
-                // Just decode the token without verification
-                const decoded = jwt.decode(refreshToken);
-                if (!decoded || !decoded.userId) {
-                    return res.status(401).json({
-                        success: false,
-                        message: 'Invalid refresh token'
-                    });
-                }
-
-                // Find user and clear sessions
-                const user = await Users.findById(decoded.userId);
-                if (user) {
-                    user.sessions = [];
-                    await user.save();
-                    console.log('🛠️ DEV_MODE: Cleared all sessions for user', {
-                        userId: user._id,
-                        email: user.email
-                    });
-                }
-
-                return res.json({
-                    success: true,
-                    message: 'Logged out successfully (dev mode)'
-                });
-            }
-
-            // PRODUCTION MODE - Try proper verification
-            let payload;
-
+            // ATTEMPT 1: Try to verify with RS256
             try {
-                console.log('🔐 Attempting RS256 verification');
-                payload = jwt.verify(refreshToken, publicKey, {
+                const payload = jwt.verify(refreshToken, publicKey, {
                     algorithms: ['RS256'],
                     issuer: ISSUER,
-                    audience: AUDIENCE,
-                    ignoreExpiration: false
+                    audience: AUDIENCE
                 });
-                console.log('✅ RS256 verification successful', { userId: payload.userId });
-            } catch (rs256Error) {
-                console.warn('⚠️ RS256 verification failed, falling back to decode:', {
-                    error: rs256Error.message,
-                    errorName: rs256Error.name
-                });
-
-                // Fallback: decode without verification
+                userId = payload.userId;
+                console.debug('🔐 LOGOUT - RS256 verification successful', { userId });
+            } catch (verifyError) {
+                // ATTEMPT 2: Decode without verification
+                console.warn('⚠️ LOGOUT - RS256 failed, decoding:', verifyError.message);
                 const decoded = jwt.decode(refreshToken);
-                if (!decoded || !decoded.userId) {
-                    return res.status(401).json({
-                        success: false,
-                        message: 'Invalid refresh token'
-                    });
+                if (decoded && decoded.userId) {
+                    userId = decoded.userId;
+                    console.debug('🔍 LOGOUT - Decoded token', { userId });
                 }
-
-                payload = decoded;
-                console.log('🔄 Using decoded payload (no verification)', { userId: payload.userId });
             }
 
-            // Find the user
-            const user = await Users.findById(payload.userId);
-            if (!user) {
-                console.warn('❌ User not found for logout', {
-                    userId: payload.userId,
-                    ip, country, deviceInfo
-                });
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid refresh token'
-                });
-            }
+            // If we got a userId, try to clear sessions
+            if (userId) {
+                const user = await Users.findById(userId);
+                if (user) {
+                    const sessionsBefore = user.sessions.length;
 
-            // Remove sessions
-            const sessionsBefore = user.sessions.length;
+                    // Remove sessions matching this refresh token
+                    user.sessions = user.sessions.filter(session =>
+                        session.token !== refreshToken
+                    );
 
-            // Try to remove specific session with CSRF token
-            if (csrfToken) {
-                const sessionIndex = user.sessions.findIndex((s) =>
-                    s.token === refreshToken && s.csrfToken === csrfToken
-                );
+                    const sessionsRemoved = sessionsBefore - user.sessions.length;
+                    await user.save();
 
-                if (sessionIndex !== -1) {
-                    user.sessions.splice(sessionIndex, 1);
-                    console.log('✅ Removed specific session with CSRF token', {
+                    console.info('✅ LOGOUT - Sessions cleared', {
                         userId: user._id,
-                        removedIndex: sessionIndex
+                        email: user.email,
+                        sessionsRemoved,
+                        remainingSessions: user.sessions.length
                     });
                 }
             }
 
-            // If no session removed, clear all sessions for safety
-            if (user.sessions.length === sessionsBefore) {
-                console.warn('⚠️ No matching session found, clearing all sessions', {
-                    userId: user._id,
-                    sessionsCleared: sessionsBefore
-                });
-                user.sessions = [];
-            }
-
-            await user.save();
-
-            console.info('✅ Logout completed successfully', {
-                userId: user._id,
-                email: user.email,
-                sessionsRemoved: sessionsBefore - user.sessions.length,
-                remainingSessions: user.sessions.length,
-                ip,
-                country,
-                deviceInfo
-            });
-
-            res.json({
+            // ALWAYS return success (even if verification failed)
+            console.info('🎉 LOGOUT - Success response sent');
+            return res.json({
                 success: true,
                 message: 'Logged out successfully'
             });
 
         } catch (error) {
-            console.error('❌ Logout error', {
+            console.error('❌ LOGOUT - Unexpected error:', {
                 error: error.message,
-                errorName: error.name,
-                ip,
-                country,
-                deviceInfo,
-                timestamp: new Date().toISOString(),
+                stack: error.stack?.split('\n')[0] // First line only
             });
 
-            // Handle JWT errors
-            if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Invalid refresh token'
-                });
-            }
-
-            return res.status(500).json({
-                success: false,
-                message: 'Server error during logout'
+            // STILL return success - frontend should clear local state regardless
+            return res.json({
+                success: true,
+                message: 'Logout completed (backend error handled)'
             });
         }
     }),
