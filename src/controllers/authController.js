@@ -781,18 +781,20 @@ export const verifyTOTPSetupLogin = [
 ];
 
 // For verifying existing TOTP during login (user already has TOTP set up)
+// For verifying existing TOTP during login (user already has TOTP set up)
 export const verifyTOTPLogin = [
     validate([
-        body('totpCode').isLength({ min: 6, max: 6 }).withMessage('TOTP code must be 6 digits'),
+        body('code').matches(/^([0-9]{6}|[A-Z0-9]{8})$/)
+            .withMessage('Code must be either 6-digit TOTP code or 8-character backup code'),
         body('usernameOrEmail').notEmpty().withMessage('Username or email is required'),
         body('fingerprint').notEmpty().withMessage('Device fingerprint is required'),
     ]),
     asyncHandler(async (req, res) => {
-        const { totpCode, usernameOrEmail, fingerprint } = req.body;
+        const { code, usernameOrEmail, fingerprint } = req.body;
         const { ip, country, deviceInfo } = getClientInfo(req);
 
         console.info('Verify TOTP during login route accessed', {
-            body: { usernameOrEmail, fingerprint, totpCode: '[REDACTED]' },
+            body: { usernameOrEmail, fingerprint, code: '[REDACTED]' },
             ip,
             country,
             deviceInfo,
@@ -808,7 +810,7 @@ export const verifyTOTPLogin = [
                 isActive: true,
                 twoFactorEnabled: true,
                 twoFactorSetupCompleted: true
-            });
+            }).select('+twoFactorBackupCodes'); // ✅ IMPORTANT: Select backup codes field
 
             if (!user || !user.twoFactorSecret) {
                 console.error('TOTP verification failed - User or secret not found:', {
@@ -824,19 +826,85 @@ export const verifyTOTPLogin = [
                 });
             }
 
-            // Verify TOTP code
-            const verified = speakeasy.totp.verify({
-                secret: user.twoFactorSecret,
-                encoding: 'base32',
-                token: totpCode,
-                window: 10 // Allow time drift
-            });
+            let isBackupCode = false;
+            let verificationResult = null;
+            let remainingBackupCodes = 0;
 
-            if (!verified) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid TOTP code. Please try again.'
+            // ✅ CHECK IF IT'S A BACKUP CODE (8 characters)
+            if (code.length === 8) {
+                isBackupCode = true;
+
+                // Use model method to verify backup code
+                verificationResult = await user.verifyBackupCode(code, ip, deviceInfo, country);
+
+                if (!verificationResult.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        message: verificationResult.remainingCodes === 0
+                            ? 'No backup codes available'
+                            : 'Invalid backup code'
+                    });
+                }
+
+                // Use model method to mark backup code as used
+                remainingBackupCodes = await user.useBackupCode(
+                    verificationResult.index,
+                    ip,
+                    deviceInfo,
+                    country
+                );
+
+                console.info('Backup code used successfully', {
+                    userId: user._id,
+                    username: user.username,
+                    remainingBackupCodes,
+                    ip,
+                    country,
+                    deviceInfo
                 });
+
+                // ✅ SEND EMAIL NOTIFICATION FOR BACKUP CODE USAGE
+                const emailSent = await sendEmailData('backup_code_used', user.email, {
+                    username: user.username,
+                    timestamp: new Date().toISOString(),
+                    ip,
+                    country,
+                    deviceInfo,
+                    remainingCodes: remainingBackupCodes,
+                    action: 'Login with backup code',
+                    supportEmail: 'support@quantumrobots.com'
+                });
+
+                if (!emailSent) {
+                    console.error('Failed to send backup code usage notification email', {
+                        email: user.email,
+                        ip,
+                        country,
+                        deviceInfo
+                    });
+                    // Don't fail the login, just log it
+                } else {
+                    console.info('Backup code usage notification email sent', {
+                        email: user.email,
+                        remainingBackupCodes
+                    });
+                }
+            }
+            // ✅ CHECK IF IT'S A TOTP CODE (6 digits)
+            else if (code.length === 6) {
+                const verified = speakeasy.totp.verify({
+                    secret: user.twoFactorSecret,
+                    encoding: 'base32',
+                    token: code,
+                    window: 10 // Allow time drift
+                });
+
+                if (!verified) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid TOTP code. Please try again.'
+                    });
+                }
             }
 
             // Complete login
@@ -850,22 +918,44 @@ export const verifyTOTPLogin = [
 
             await user.save();
 
-            console.info('TOTP verification successful during login', {
+            console.info('Login successful', {
                 userId: user._id,
                 username: user.username,
+                method: isBackupCode ? 'backup_code' : 'totp_code',
                 ip,
                 country,
-                deviceInfo
+                deviceInfo,
+                ...(isBackupCode && { remainingBackupCodes })
             });
 
-            return res.json({
-                success: true,
-                message: 'Login successful',
-                accessToken,
-                refreshToken,
-                csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
-                user: sanitizeUser(user)
-            });
+            // ✅ RETURN DIFFERENT RESPONSE FOR BACKUP CODE USAGE
+            if (isBackupCode) {
+                return res.json({
+                    success: true,
+                    message: `Login successful! ${remainingBackupCodes} backup codes remaining.`,
+                    backupCodesRemaining: remainingBackupCodes,
+                    showWarning: remainingBackupCodes <= 3,
+                    warningMessage: remainingBackupCodes <= 2
+                        ? `⚠️ CRITICAL: Only ${remainingBackupCodes} backup code(s) left! Regenerate them in security settings.`
+                        : remainingBackupCodes <= 3
+                            ? `⚠️ Warning: Only ${remainingBackupCodes} backup codes left`
+                            : null,
+                    accessToken,
+                    refreshToken,
+                    csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+                    user: sanitizeUser(user),
+                    usedBackupCode: true
+                });
+            } else {
+                return res.json({
+                    success: true,
+                    message: 'Login successful',
+                    accessToken,
+                    refreshToken,
+                    csrfToken: user.sessions[user.sessions.length - 1].csrfToken,
+                    user: sanitizeUser(user)
+                });
+            }
 
         } catch (error) {
             console.error('TOTP verification during login error:', {
@@ -879,7 +969,7 @@ export const verifyTOTPLogin = [
             });
             return res.status(500).json({
                 success: false,
-                message: 'Failed to verify TOTP code'
+                message: 'Failed to verify authentication code'
             });
         }
     })

@@ -87,6 +87,31 @@ const DeviceSchema = new mongoose.Schema({
 // Add TTL index for devices with expiresAt
 DeviceSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+// ✅ ADDED: Schema for backup code usage logging
+const BackupCodeLogSchema = new mongoose.Schema({
+    usedAt: {
+        type: Date,
+        default: Date.now,
+        required: true
+    },
+    ip: {
+        type: String,
+        required: true
+    },
+    deviceInfo: {
+        type: String,
+        required: true
+    },
+    country: {
+        type: String,
+        default: 'unknown'
+    },
+    remainingCodes: {
+        type: Number,
+        required: true
+    }
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
     username: {
         type: String,
@@ -116,8 +141,10 @@ const UserSchema = new mongoose.Schema({
     twoFactorSecret: {
         type: String
     },
+    // ✅ FIXED: Backup codes should be hashed for security
     twoFactorBackupCodes: [{
-        type: String
+        type: String,
+        select: false // Don't return in queries by default
     }],
     twoFactorSetupCompleted: {
         type: Boolean,
@@ -126,6 +153,15 @@ const UserSchema = new mongoose.Schema({
     pendingTOTPEnable: {
         type: Boolean,
         default: false
+    },
+    // ✅ ADDED: Backup code usage logging
+    backupCodeLogs: {
+        type: [BackupCodeLogSchema],
+        default: [],
+        select: false
+    },
+    lastBackupCodeUsed: {
+        type: Date
     },
 
     profileImage: { type: String, default: "" },
@@ -202,6 +238,142 @@ UserSchema.pre("save", async function (next) {
         next(error);
     }
 });
+
+// ========== BACKUP CODE METHODS ==========
+UserSchema.methods.verifyBackupCode = async function (backupCode, ip, deviceInfo, country) {
+    try {
+        // Check if backup codes exist
+        if (!this.twoFactorBackupCodes || this.twoFactorBackupCodes.length === 0) {
+            console.warn("No backup codes available", {
+                userId: this._id.toString(),
+                email: this.email
+            });
+            return { valid: false, index: -1, remainingCodes: 0 };
+        }
+
+        // Compare the backup code with each hashed backup code
+        for (let i = 0; i < this.twoFactorBackupCodes.length; i++) {
+            const match = await bcrypt.compare(backupCode, this.twoFactorBackupCodes[i]);
+            if (match) {
+                console.info("Backup code verified successfully", {
+                    userId: this._id.toString(),
+                    email: this.email,
+                    codeIndex: i,
+                    remainingBeforeUse: this.twoFactorBackupCodes.length
+                });
+                return {
+                    valid: true,
+                    index: i,
+                    remainingCodes: this.twoFactorBackupCodes.length
+                };
+            }
+        }
+
+        console.warn("Invalid backup code attempt", {
+            userId: this._id.toString(),
+            email: this.email,
+            ip,
+            deviceInfo,
+            country
+        });
+        return { valid: false, index: -1, remainingCodes: this.twoFactorBackupCodes.length };
+    } catch (error) {
+        console.error("Failed to verify backup code", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+UserSchema.methods.useBackupCode = async function (codeIndex, ip, deviceInfo, country) {
+    try {
+        // Remove the used backup code
+        this.twoFactorBackupCodes.splice(codeIndex, 1);
+
+        // Update timestamp
+        this.lastBackupCodeUsed = new Date();
+
+        // Log the usage
+        this.backupCodeLogs.push({
+            usedAt: new Date(),
+            ip,
+            deviceInfo,
+            country,
+            remainingCodes: this.twoFactorBackupCodes.length
+        });
+
+        // Keep only last 10 logs to prevent unbounded growth
+        if (this.backupCodeLogs.length > 10) {
+            this.backupCodeLogs = this.backupCodeLogs.slice(-10);
+        }
+
+        await this.save();
+
+        console.info("Backup code used and removed", {
+            userId: this._id.toString(),
+            email: this.email,
+            remainingCodes: this.twoFactorBackupCodes.length,
+            ip,
+            deviceInfo,
+            country
+        });
+
+        return this.twoFactorBackupCodes.length;
+    } catch (error) {
+        console.error("Failed to use backup code", {
+            userId: this._id.toString(),
+            email: this.email,
+            codeIndex,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+UserSchema.methods.generateBackupCodes = async function () {
+    try {
+        // Generate 8 new backup codes
+        const backupCodes = Array.from({ length: 8 }, () =>
+            Math.random().toString(36).substring(2, 10).toUpperCase()
+        );
+
+        // Hash the backup codes (same as passwords)
+        const hashedBackupCodes = await Promise.all(
+            backupCodes.map(async (code) => await bcrypt.hash(code, 10))
+        );
+
+        // Store the hashed codes
+        this.twoFactorBackupCodes = hashedBackupCodes;
+
+        // Clear logs when generating new codes
+        this.backupCodeLogs = [];
+        this.lastBackupCodeUsed = undefined;
+
+        await this.save();
+
+        console.info("New backup codes generated", {
+            userId: this._id.toString(),
+            email: this.email,
+            count: backupCodes.length
+        });
+
+        // Return plain codes for user to save (show only once!)
+        return backupCodes;
+    } catch (error) {
+        console.error("Failed to generate backup codes", {
+            userId: this._id.toString(),
+            email: this.email,
+            error: error.message
+        });
+        throw error;
+    }
+};
+
+UserSchema.methods.getRemainingBackupCodesCount = function () {
+    return this.twoFactorBackupCodes?.length || 0;
+};
 
 // ========== AUTHENTICATION TOKEN METHODS ==========
 UserSchema.methods.generateAccessToken = function () {
@@ -539,6 +711,8 @@ UserSchema.methods.disableTOTP = async function () {
         this.twoFactorSecret = undefined;
         this.twoFactorBackupCodes = [];
         this.twoFactorSetupCompleted = false;
+        this.backupCodeLogs = [];
+        this.lastBackupCodeUsed = undefined;
 
         await this.save();
         console.info("TOTP disabled successfully", {
