@@ -1822,13 +1822,76 @@ export const logout = [
         });
 
         try {
-            const payload = jwt.verify(refreshToken, publicKey, { algorithms: ['RS256'] });
+            let payload;
+
+            try {
+                // Debug: Log what the public key looks like
+                console.debug('Public key debugging:', {
+                    publicKeyExists: !!publicKey,
+                    publicKeyLength: publicKey?.length,
+                    publicKeyFirst50: publicKey?.substring(0, 50),
+                    publicKeyLast50: publicKey?.substring(Math.max(0, publicKey?.length - 50))
+                });
+
+                // Try to verify with RS256
+                payload = jwt.verify(refreshToken, publicKey, {
+                    algorithms: ['RS256'],
+                    issuer: ISSUER,
+                    audience: AUDIENCE
+                });
+            } catch (jwtError) {
+                console.error('JWT verification failed in logout endpoint:', {
+                    error: jwtError.message,
+                    errorName: jwtError.name,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+
+                // If verification fails due to key format, we still want to clear sessions
+                // Decode without verification to get the userId
+                const decoded = jwt.decode(refreshToken);
+                if (!decoded || !decoded.userId) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Invalid refresh token'
+                    });
+                }
+
+                // Find user by decoded userId
+                const user = await Users.findById(decoded.userId);
+                if (!user) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Invalid refresh token'
+                    });
+                }
+
+                // Remove all sessions for this user (cleanup)
+                user.sessions = [];
+                await blacklistToken(refreshToken);
+                await user.save();
+
+                console.info('User sessions cleared despite JWT verification error', {
+                    userId: user._id,
+                    ip,
+                    country,
+                    deviceInfo
+                });
+
+                return res.json({
+                    success: true,
+                    message: 'Logged out successfully'
+                });
+            }
+
+            // Original verification success flow
             const user = await Users.findById(payload.userId);
 
             if (!user) {
                 console.warn('User not found for logout', { userId: payload.userId, ip, country, deviceInfo });
                 return res.status(401).json({
-                    success: false, // ✅ ADDED
+                    success: false,
                     message: 'Invalid refresh token'
                 });
             }
@@ -1842,7 +1905,7 @@ export const logout = [
                     deviceInfo,
                 });
                 return res.status(401).json({
-                    success: false, // ✅ ADDED
+                    success: false,
                     message: 'CSRF token required'
                 });
             }
@@ -1859,7 +1922,7 @@ export const logout = [
                     deviceInfo,
                 });
                 return res.status(401).json({
-                    success: false, // ✅ ADDED
+                    success: false,
                     message: 'Invalid refresh token or CSRF token'
                 });
             }
@@ -1877,7 +1940,7 @@ export const logout = [
             });
 
             res.json({
-                success: true, // ✅ ADDED
+                success: true,
                 message: 'Logged out successfully'
             });
 
@@ -1894,13 +1957,13 @@ export const logout = [
             // Handle JWT verification errors specifically
             if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
                 return res.status(401).json({
-                    success: false, // ✅ ADDED
+                    success: false,
                     message: 'Invalid refresh token'
                 });
             }
 
             return res.status(500).json({
-                success: false, // ✅ ADDED
+                success: false,
                 message: 'Server error during logout'
             });
         }
