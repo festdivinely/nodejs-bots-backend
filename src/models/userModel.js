@@ -87,7 +87,6 @@ const DeviceSchema = new mongoose.Schema({
 // Add TTL index for devices with expiresAt
 DeviceSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-// ✅ ADDED: Schema for backup code usage logging
 const BackupCodeLogSchema = new mongoose.Schema({
     usedAt: {
         type: Date,
@@ -141,10 +140,9 @@ const UserSchema = new mongoose.Schema({
     twoFactorSecret: {
         type: String
     },
-    // ✅ FIXED: Backup codes should be hashed for security
     twoFactorBackupCodes: [{
         type: String,
-        select: false // Don't return in queries by default
+        select: false
     }],
     twoFactorSetupCompleted: {
         type: Boolean,
@@ -154,10 +152,9 @@ const UserSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
-    // ✅ ADDED: Backup code usage logging
     backupCodeLogs: {
         type: [BackupCodeLogSchema],
-        default: [],
+        default: () => [],
         select: false
     },
     lastBackupCodeUsed: {
@@ -173,7 +170,7 @@ const UserSchema = new mongoose.Schema({
     sessions: { type: [SessionSchema], default: [] },
     devices: { type: [DeviceSchema], default: [] },
 
-    // ✅ CODE-BASED FIELDS ONLY
+    // CODE-BASED FIELDS ONLY
     passwordResetCode: { type: String },
     passwordResetCodeExpires: { type: Date },
     emailVerifyCode: { type: String },
@@ -226,6 +223,7 @@ UserSchema.virtual("id").get(function () {
     return this._id.toHexString();
 });
 
+// ========== PRE-SAVE HOOKS ==========
 UserSchema.pre("save", async function (next) {
     if (!this.isModified("password")) return next();
     try {
@@ -237,6 +235,14 @@ UserSchema.pre("save", async function (next) {
         console.error("Failed to hash password", { userId: this._id?.toString(), email: this.email, error: error.message });
         next(error);
     }
+});
+
+UserSchema.pre("save", function (next) {
+    // Initialize backupCodeLogs if undefined (important for existing users)
+    if (!this.backupCodeLogs) {
+        this.backupCodeLogs = [];
+    }
+    next();
 });
 
 // ========== BACKUP CODE METHODS ==========
@@ -294,6 +300,11 @@ UserSchema.methods.useBackupCode = async function (codeIndex, ip, deviceInfo, co
 
         // Update timestamp
         this.lastBackupCodeUsed = new Date();
+
+        // Initialize backupCodeLogs if undefined (defensive check)
+        if (!this.backupCodeLogs) {
+            this.backupCodeLogs = [];
+        }
 
         // Log the usage
         this.backupCodeLogs.push({

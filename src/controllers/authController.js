@@ -802,6 +802,7 @@ export const verifyTOTPLogin = [
         });
 
         try {
+            // ✅ FIXED: Added +backupCodeLogs to the select to prevent undefined error
             const user = await Users.findOne({
                 $or: [
                     { email: { $regex: `^${usernameOrEmail}$`, $options: 'i' } },
@@ -810,7 +811,7 @@ export const verifyTOTPLogin = [
                 isActive: true,
                 twoFactorEnabled: true,
                 twoFactorSetupCompleted: true
-            }).select('+twoFactorBackupCodes'); // ✅ IMPORTANT: Select backup codes field
+            }).select('+twoFactorBackupCodes +backupCodeLogs'); // ✅ CRITICAL FIX: Added backupCodeLogs
 
             if (!user || !user.twoFactorSecret) {
                 console.error('TOTP verification failed - User or secret not found:', {
