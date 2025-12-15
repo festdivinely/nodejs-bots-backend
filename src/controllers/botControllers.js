@@ -1,14 +1,12 @@
 // src/controllers/botController.js
 import asyncHandler from "express-async-handler";
 import axios from "axios";
-import { ObjectId } from "mongodb";
+import BotTemplate from "../models/botTemplateModel.js";
+import UserRobot from "../models/userRobotModel.js";
+import Users from "../models/userModel.js";
 
-// @desc    Create a new bot template
-// @route   POST /api/bot
-// @access  Private/Admin
 export const createBotTemplate = asyncHandler(async (req, res) => {
-    const db = req.db; // ← FROM API HANDLER
-    const userId = req.user.id; // ← STRING FROM JWT
+    const userId = req.user.id;
     const { name, market, description, image, efficiency, risk, isFree, price, platform, botData } = req.body;
 
     if (!name || !market || !description || !platform) {
@@ -23,7 +21,7 @@ export const createBotTemplate = asyncHandler(async (req, res) => {
         throw new Error("botData must be an object");
     }
 
-    const template = {
+    const template = await BotTemplate.create({
         name,
         market,
         description,
@@ -34,29 +32,19 @@ export const createBotTemplate = asyncHandler(async (req, res) => {
         price: price ?? 0,
         platform,
         botData,
-        createdBy: new ObjectId(userId), // ← SAFE
-        createdAt: new Date(),
-        updatedAt: new Date(),
-    };
+        createdBy: userId,
+    });
 
-    const result = await db.collection("botTemplates").insertOne(template);
-    const createdTemplate = { ...template, _id: result.insertedId };
-
-    console.info("Bot template created", { userId, templateId: createdTemplate._id });
-    res.status(201).json(createdTemplate);
+    console.info("Bot template created", { userId, templateId: template._id });
+    res.status(201).json(template);
 });
 
-// @desc    Update a bot template
-// @route   PATCH /api/bot/:id
-// @access  Private/Admin
 export const updateBotTemplate = asyncHandler(async (req, res) => {
-    const db = req.db;
     const userId = req.user.id;
     const { id } = req.params;
     const { name, market, description, image, efficiency, risk, isFree, price, platform, botData } = req.body;
 
-    const objectId = new ObjectId(id);
-    const template = await db.collection("botTemplates").findOne({ _id: objectId });
+    const template = await BotTemplate.findById(id);
 
     if (!template) {
         res.status(404);
@@ -73,7 +61,7 @@ export const updateBotTemplate = asyncHandler(async (req, res) => {
         throw new Error("botData must be an object");
     }
 
-    const updateFields = { updatedAt: new Date() };
+    const updateFields = {};
     if (name) updateFields.name = name;
     if (market) updateFields.market = market;
     if (description) updateFields.description = description;
@@ -85,64 +73,48 @@ export const updateBotTemplate = asyncHandler(async (req, res) => {
     if (platform) updateFields.platform = platform;
     if (botData) updateFields.botData = botData;
 
-    const result = await db.collection("botTemplates").findOneAndUpdate(
-        { _id: objectId },
+    const updatedTemplate = await BotTemplate.findByIdAndUpdate(
+        id,
         { $set: updateFields },
-        { returnDocument: "after" }
+        { new: true, runValidators: true }
     );
 
     console.info("Bot template updated", { userId, templateId: id });
-    res.json(result.value);
+    res.json(updatedTemplate);
 });
 
-// @desc    Get all bots with pagination
-// @route   GET /api/bot
-// @access  Public
 export const getAllBots = asyncHandler(async (req, res) => {
-    const db = req.db;
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const bots = await db.collection("botTemplates")
-        .aggregate([
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "createdBy",
-                    foreignField: "_id",
-                    as: "createdBy"
-                }
-            },
-            { $unwind: { path: "$createdBy", preserveNullAndEmptyArrays: true } },
-            { $match: { "createdBy.isActive": true, "createdBy.role": "admin" } },
-            { $sort: { createdAt: -1 } },
-            { $skip: skip },
-            { $limit: limit },
-            {
-                $project: {
-                    "createdBy.password": 0,
-                    "createdBy.sessions": 0,
-                    "createdBy.emailVerifyToken": 0,
-                    "createdBy.emailVerifyExpires": 0,
-                    "createdBy.deviceVerifyToken": 0,
-                    "createdBy.deviceVerifyExpires": 0,
-                    "createdBy.deviceVerifyFingerprint": 0,
-                    "createdBy.passwordResetToken": 0,
-                    "createdBy.passwordResetExpires": 0,
-                }
-            }
-        ])
-        .toArray();
+    const bots = await BotTemplate.find({})
+        .populate({
+            path: 'createdBy',
+            select: '-password -sessions -emailVerifyToken -deviceVerifyToken -passwordResetToken -__v',
+            match: { isActive: true, role: 'admin' }
+        })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
 
     if (bots.length === 0) {
-        res.status(404);
-        throw new Error("No bots found");
+        return res.status(404).json({
+            success: false,
+            message: "No bots found"
+        });
     }
 
-    const totalBots = await db.collection("botTemplates").countDocuments({ createdBy: { $exists: true } });
+    const filteredBots = bots.filter(bot => bot.createdBy);
 
-    const botResponse = bots.map(bot => ({
+    if (filteredBots.length === 0) {
+        return res.status(404).json({
+            success: false,
+            message: "No active admin bots available"
+        });
+    }
+
+    const botResponse = filteredBots.map(bot => ({
         id: bot._id,
         name: bot.name,
         market: bot.market,
@@ -159,8 +131,6 @@ export const getAllBots = asyncHandler(async (req, res) => {
             username: bot.createdBy.username,
             profile_image: bot.createdBy.profileImage,
             role: bot.createdBy.role,
-            first_name: bot.createdBy.firstName,
-            last_name: bot.createdBy.lastName,
             display_name: bot.createdBy.firstName && bot.createdBy.lastName
                 ? `${bot.createdBy.firstName} ${bot.createdBy.lastName}`
                 : bot.createdBy.username,
@@ -168,8 +138,11 @@ export const getAllBots = asyncHandler(async (req, res) => {
         createdAt: bot.createdAt,
     }));
 
+    const totalBots = await BotTemplate.countDocuments();
+
     console.info("Fetched all bots", { count: botResponse.length, page, limit });
     res.json({
+        success: true,
         bots: botResponse,
         totalBots,
         currentPage: page,
@@ -177,52 +150,44 @@ export const getAllBots = asyncHandler(async (req, res) => {
     });
 });
 
-// @desc    Get all bots for the authenticated user
-// @route   GET /api/bot/user
-// @access  Private
 export const getUserBots = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const userId = new ObjectId(req.user.id);
+    const userId = req.user.id;
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const userRobots = await db.collection("userrobots")
-        .aggregate([
-            { $match: { userId } },
-            {
-                $lookup: {
-                    from: "botTemplates",
-                    localField: "template.refId",
-                    foreignField: "_id",
-                    as: "template.refId"
-                }
-            },
-            { $unwind: "$template.refId" },
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "template.refId.createdBy",
-                    foreignField: "_id",
-                    as: "template.refId.createdBy"
-                }
-            },
-            { $unwind: { path: "$template.refId.createdBy", preserveNullAndEmptyArrays: true } },
-            { $match: { "template.refId.createdBy.isActive": true, "template.refId.createdBy.role": "admin" } },
-            { $sort: { createdAt: -1 } },
-            { $skip: skip },
-            { $limit: limit },
-        ])
-        .toArray();
+    const userRobots = await UserRobot.find({ userId })
+        .populate({
+            path: 'template.refId',
+            populate: {
+                path: 'createdBy',
+                select: '-password -sessions -emailVerifyToken -deviceVerifyToken -passwordResetToken -__v',
+                match: { isActive: true, role: 'admin' }
+            }
+        })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
 
     if (userRobots.length === 0) {
-        res.status(404);
-        throw new Error("No bots found for this user");
+        return res.status(404).json({
+            success: false,
+            message: "No bots found for this user"
+        });
     }
 
-    const totalRobots = await db.collection("userrobots").countDocuments({ userId });
+    const filteredRobots = userRobots.filter(robot =>
+        robot.template.refId && robot.template.refId.createdBy
+    );
 
-    const robotResponse = userRobots.map(robot => ({
+    if (filteredRobots.length === 0) {
+        return res.status(404).json({
+            success: false,
+            message: "No valid bots found for this user"
+        });
+    }
+
+    const robotResponse = filteredRobots.map(robot => ({
         id: robot._id,
         template: {
             id: robot.template.refId._id,
@@ -254,429 +219,328 @@ export const getUserBots = asyncHandler(async (req, res) => {
         createdAt: robot.createdAt,
     }));
 
-    console.info("Fetched user bots", { userId: req.user.id, count: robotResponse.length });
+    const totalRobots = await UserRobot.countDocuments({ userId });
+
+    console.info("Fetched user bots", { userId, count: robotResponse.length });
     res.json({
+        success: true,
         bots: robotResponse,
         totalBots: totalRobots,
         currentPage: page,
-        totalPages: Math.ceil(totalBots / limit),
+        totalPages: Math.ceil(totalRobots / limit),
     });
 });
 
-// @desc    Check if a bot has API keys
-// @route   GET /api/bot/:botId/has-api-key
-// @access  Private
 export const hasApiKey = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const userId = new ObjectId(req.user.id);
-    const botId = new ObjectId(req.params.botId);
+    const userId = req.user.id;
+    const { botId } = req.params;
 
-    const userRobot = await db.collection("userrobots")
-        .aggregate([
-            { $match: { _id: botId, userId } },
-            {
-                $lookup: {
-                    from: "botTemplates",
-                    localField: "template.refId",
-                    foreignField: "_id",
-                    as: "template.refId"
-                }
-            },
-            { $unwind: "$template.refId" },
-            { $project: { apiKeys: 1, "template.refId.platform": 1 } }
-        ])
-        .next();
+    const userRobot = await UserRobot.findOne({ _id: botId, userId })
+        .populate('template.refId', 'platform');
 
     if (!userRobot) {
-        return res.status(404).json({ message: "Bot not found or not owned by user" });
+        return res.status(404).json({
+            success: false,
+            message: "Bot not found or not owned by user"
+        });
     }
 
     res.json({
+        success: true,
         hasApiKey: !!userRobot.apiKeys?.length,
         apiKeyCount: userRobot.apiKeys?.length || 0,
         platform: userRobot.template.refId.platform,
     });
 });
 
-// @desc    Acquire a bot
-// @route   POST /api/bot/acquire
-// @access  Private
 export const acquireBot = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const client = req.client; // ← from API handler
-    const session = client.startSession();
-    await session.startTransaction();
+    const userId = req.user.id;
+    const { templateId, config, transactionId, startMode } = req.body;
 
-    try {
-        const userId = new ObjectId(req.user.id);
-        const { templateId, config, transactionId, startMode } = req.body;
-        const templateObjectId = new ObjectId(templateId);
+    if (!templateId || !config || typeof config !== "object") {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid input"
+        });
+    }
 
-        if (!templateObjectId || !config || typeof config !== "object") {
-            await session.abortTransaction();
-            return res.status(400).json({ message: "Invalid input" });
-        }
+    const template = await BotTemplate.findById(templateId);
+    if (!template) {
+        return res.status(404).json({
+            success: false,
+            message: "Bot template not found"
+        });
+    }
 
-        const template = await db.collection("botTemplates").findOne({ _id: templateObjectId });
-        if (!template) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: "Bot template not found" });
-        }
+    if (!template.isFree && !transactionId) {
+        return res.status(400).json({
+            success: false,
+            message: "Transaction ID required for paid bot"
+        });
+    }
 
-        if (!template.isFree && !transactionId) {
-            await session.abortTransaction();
-            return res.status(400).json({ message: "Transaction ID required for paid bot" });
-        }
+    const status = startMode === "momentarily" ? "running momentarily" :
+        startMode === "perpetually" ? "running perpetually" : "stopped";
 
-        const status = startMode === "momentarily" ? "RUNNING_MOMENTARILY" :
-            startMode === "perpetually" ? "RUNNING_PERPETUALLY" : "STOPPED";
+    const userRobot = await UserRobot.create({
+        userId,
+        template: {
+            refId: template._id,
+            snapshot: {
+                name: template.name,
+                description: template.description,
+                image: template.image,
+                price: template.price,
+                market: template.market,
+                risk: template.risk,
+                platform: template.platform
+            }
+        },
+        config: { ...config, accountState: config.accountState || "demo" },
+        apiKeys: (config.apiKeys || []).map(k => ({ platform: k.platform, data: k })),
+        purchased: template.isFree || !!transactionId,
+        transactionId: transactionId || null,
+        status,
+        accountState: config.accountState || "demo",
+        runHistory: status !== "stopped" ? [{ action: `Started (${startMode})`, timestamp: new Date() }] : [],
+        progress: {},
+    });
 
-        const userRobot = {
-            userId,
-            template: { refId: template._id, snapshot: { ...template, createdBy: undefined } },
-            config: { ...config, accountState: config.accountState || "demo" },
-            apiKeys: (config.apiKeys || []).map(k => ({ platform: k.platform, data: k })),
-            purchased: template.isFree || !!transactionId,
-            transactionId: transactionId || null,
-            status,
-            accountState: config.accountState || "demo",
-            runHistory: status !== "STOPPED" ? [{ action: `Started (${startMode})`, timestamp: new Date() }] : [],
-            progress: {},
-            lastUpdated: new Date(),
-            createdAt: new Date(),
-        };
-
-        const result = await db.collection("userrobots").insertOne(userRobot, { session });
-        const botId = result.insertedId;
-
-        if (startMode && startMode !== "none") {
-            const pythonConfig = { ...userRobot.config, apiKeys: userRobot.apiKeys.map(k => k.data) };
-            try {
-                const resp = await axios.post(
-                    process.env.PYTHON_SERVER_URL + "/api/bots/update",
-                    {
-                        botId: botId.toString(),
-                        userId: req.user.id,
-                        config: pythonConfig,
-                        status,
-                        templateId: template._id.toString(),
-                        platform: template.platform,
-                        market: template.market,
-                    },
-                    { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
-                );
-                if (resp.status !== 200) throw new Error("Python server failed");
-            } catch (error) {
-                await session.abortTransaction();
-                return res.status(500).json({ message: "Failed to start bot on Python server" });
+    await Users.findByIdAndUpdate(
+        userId,
+        {
+            $push: {
+                robots: {
+                    robot_id: userRobot._id,
+                    robot_name: template.name
+                }
             }
         }
+    );
 
-        await db.collection("users").updateOne(
-            { _id: userId },
-            { $push: { robots: { robot_id: botId, robot_name: template.name } }, $set: { updatedAt: new Date() } },
-            { session }
-        );
-
-        await session.commitTransaction();
-        res.status(201).json({ message: "Bot acquired", robot: { id: botId, ...userRobot } });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(500).json({ message: "Failed to acquire bot", error: error.message });
-    } finally {
-        await session.endSession();
+    if (startMode && startMode !== "none") {
+        try {
+            await axios.post(
+                process.env.PYTHON_SERVER_URL + "/api/bots/update",
+                {
+                    botId: userRobot._id.toString(),
+                    userId: userId,
+                    config: { ...config, apiKeys: config.apiKeys || [] },
+                    status,
+                    templateId: template._id.toString(),
+                    platform: template.platform,
+                    market: template.market,
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}`
+                    }
+                }
+            );
+        } catch (error) {
+            console.error("Python server call failed:", error.message);
+        }
     }
+
+    res.status(201).json({
+        success: true,
+        message: "Bot acquired",
+        robot: userRobot
+    });
 });
 
-// @desc    Update bot config & optionally start
-// @route   PATCH /api/bot/:botId
-// @access  Private
 export const updateUserBot = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const client = req.client;
-    const session = client.startSession();
-    await session.startTransaction();
+    const userId = req.user.id;
+    const { botId } = req.params;
+    const { config, startMode } = req.body;
 
-    try {
-        const userId = new ObjectId(req.user.id);
-        const botId = new ObjectId(req.params.botId);
-        const { config, startMode } = req.body;
-
-        if (!botId || !config) {
-            await session.abortTransaction();
-            return res.status(400).json({ message: "Invalid input" });
-        }
-
-        const userRobot = await db.collection("userrobots").findOne({ _id: botId, userId });
-        if (!userRobot) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: "Bot not found" });
-        }
-
-        const newStatus = startMode === "momentarily" ? "RUNNING_MOMENTARILY" :
-            startMode === "perpetually" ? "RUNNING_PERPETUALLY" :
-                startMode === "none" ? "STOPPED" : userRobot.status;
-
-        if (startMode && startMode !== "none") {
-            const pythonConfig = { ...userRobot.config, ...config, apiKeys: (config.apiKeys || userRobot.apiKeys).map(k => k.data) };
-            try {
-                const resp = await axios.post(
-                    process.env.PYTHON_SERVER_URL + "/api/bots/update",
-                    {
-                        botId: botId.toString(),
-                        userId: req.user.id,
-                        config: pythonConfig,
-                        status: newStatus,
-                        templateId: userRobot.template.refId.toString(),
-                        platform: userRobot.template.snapshot.platform,
-                        market: userRobot.template.snapshot.market,
-                    },
-                    { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
-                );
-                if (resp.status !== 200) throw new Error("Update failed");
-            } catch {
-                await session.abortTransaction();
-                return res.status(500).json({ message: "Failed to update on Python server" });
-            }
-        }
-
-        const updated = {
-            ...userRobot,
-            config: { ...userRobot.config, ...config },
-            status: newStatus,
-            lastUpdated: new Date(),
-            apiKeys: config.apiKeys ? config.apiKeys.map(k => ({ platform: k.platform, data: k })) : userRobot.apiKeys,
-        };
-
-        if (newStatus !== userRobot.status) {
-            updated.runHistory.push({ action: `Updated to ${newStatus}`, timestamp: new Date() });
-        }
-
-        await db.collection("userrobots").replaceOne({ _id: botId }, updated, { session });
-        await session.commitTransaction();
-
-        res.json({ message: "Bot updated", robot: { id: botId, ...updated } });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(500).json({ message: "Update failed", error: error.message });
-    } finally {
-        await session.endSession();
+    if (!botId || !config) {
+        return res.status(400).json({ message: "Invalid input" });
     }
+
+    const userRobot = await UserRobot.findOne({ _id: botId, userId });
+    if (!userRobot) {
+        return res.status(404).json({ message: "Bot not found" });
+    }
+
+    const newStatus = startMode === "momentarily" ? "running momentarily" :
+        startMode === "perpetually" ? "running perpetually" :
+            startMode === "none" ? "stopped" : userRobot.status;
+
+    if (startMode && startMode !== "none") {
+        try {
+            const resp = await axios.post(
+                process.env.PYTHON_SERVER_URL + "/api/bots/update",
+                {
+                    botId: botId.toString(),
+                    userId: userId,
+                    config: { ...userRobot.config, ...config, apiKeys: (config.apiKeys || userRobot.apiKeys).map(k => k.data) },
+                    status: newStatus,
+                    templateId: userRobot.template.refId.toString(),
+                    platform: userRobot.template.snapshot.platform,
+                    market: userRobot.template.snapshot.market,
+                },
+                { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
+            );
+            if (resp.status !== 200) throw new Error("Update failed");
+        } catch {
+            return res.status(500).json({ message: "Failed to update on Python server" });
+        }
+    }
+
+    const updated = {
+        ...userRobot.toObject(),
+        config: { ...userRobot.config, ...config },
+        status: newStatus,
+        lastUpdated: new Date(),
+        apiKeys: config.apiKeys ? config.apiKeys.map(k => ({ platform: k.platform, data: k })) : userRobot.apiKeys,
+    };
+
+    if (newStatus !== userRobot.status) {
+        updated.runHistory.push({ action: `Updated to ${newStatus}`, timestamp: new Date() });
+    }
+
+    await UserRobot.findByIdAndUpdate(botId, updated);
+
+    res.json({ message: "Bot updated", robot: { id: botId, ...updated } });
 });
 
-// @desc    Start bot
-// @route   POST /api/bot/:botId/start
-// @access  Private
 export const startUserBot = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const client = req.client;
-    const session = client.startSession();
-    await session.startTransaction();
+    const userId = req.user.id;
+    const { botId } = req.params;
+    const { startMode, apiKeys } = req.body;
+
+    const userRobot = await UserRobot.findOne({ _id: botId, userId });
+    if (!userRobot) {
+        return res.status(404).json({ message: "Bot not found" });
+    }
+
+    if (userRobot.status.includes("running")) {
+        return res.status(400).json({ message: "Bot already running" });
+    }
+
+    const newStatus = startMode === "momentarily" ? "running momentarily" : "running perpetually";
+    const finalApiKeys = apiKeys || userRobot.apiKeys;
+
+    if (!finalApiKeys?.length) {
+        return res.status(400).json({ message: "API key required to start" });
+    }
 
     try {
-        const userId = new ObjectId(req.user.id);
-        const botId = new ObjectId(req.params.botId);
-        const { startMode, apiKeys } = req.body;
-
-        const userRobot = await db.collection("userrobots").findOne({ _id: botId, userId });
-        if (!userRobot) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: "Bot not found" });
-        }
-
-        if (userRobot.status.includes("RUNNING")) {
-            await session.abortTransaction();
-            return res.status(400).json({ message: "Bot already running" });
-        }
-
-        const newStatus = startMode === "momentarily" ? "RUNNING_MOMENTARILY" : "RUNNING_PERPETUALLY";
-        const finalApiKeys = apiKeys || userRobot.apiKeys;
-
-        if (!finalApiKeys?.length) {
-            await session.abortTransaction();
-            return res.status(400).json({ message: "API key required to start" });
-        }
-
-        try {
-            await axios.post(
-                process.env.PYTHON_SERVER_URL + "/api/bots/update",
-                {
-                    botId: botId.toString(),
-                    userId: req.user.id,
-                    config: { ...userRobot.config, apiKeys: finalApiKeys.map(k => k.data) },
-                    status: newStatus,
-                    templateId: userRobot.template.refId.toString(),
-                    platform: userRobot.template.snapshot.platform,
-                    market: userRobot.template.snapshot.market,
-                },
-                { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
-            );
-        } catch {
-            await session.abortTransaction();
-            return res.status(500).json({ message: "Failed to start on Python server" });
-        }
-
-        await db.collection("userrobots").updateOne(
-            { _id: botId },
+        await axios.post(
+            process.env.PYTHON_SERVER_URL + "/api/bots/update",
             {
-                $set: { status: newStatus, lastUpdated: new Date(), apiKeys: finalApiKeys },
-                $push: { runHistory: { action: `Started (${startMode})`, timestamp: new Date() } }
+                botId: botId.toString(),
+                userId: userId,
+                config: { ...userRobot.config, apiKeys: finalApiKeys.map(k => k.data) },
+                status: newStatus,
+                templateId: userRobot.template.refId.toString(),
+                platform: userRobot.template.snapshot.platform,
+                market: userRobot.template.snapshot.market,
             },
-            { session }
+            { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
         );
-
-        await session.commitTransaction();
-        res.json({ message: "Bot started", status: newStatus });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(500).json({ message: "Start failed", error: error.message });
-    } finally {
-        await session.endSession();
+    } catch {
+        return res.status(500).json({ message: "Failed to start on Python server" });
     }
+
+    await UserRobot.findByIdAndUpdate(
+        botId,
+        {
+            $set: { status: newStatus, lastUpdated: new Date(), apiKeys: finalApiKeys },
+            $push: { runHistory: { action: `Started (${startMode})`, timestamp: new Date() } }
+        }
+    );
+
+    res.json({ message: "Bot started", status: newStatus });
 });
 
-// @desc    Stop bot
-// @route   POST /api/bot/:botId/stop
-// @access  Private
 export const stopUserBot = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const client = req.client;
-    const session = client.startSession();
-    await session.startTransaction();
+    const userId = req.user.id;
+    const { botId } = req.params;
+    const { stopMode } = req.body;
+
+    const userRobot = await UserRobot.findOne({ _id: botId, userId });
+    if (!userRobot) {
+        return res.status(404).json({ message: "Bot not found" });
+    }
+
+    const newStatus = stopMode === "pause" ? "paused" : "stopped";
 
     try {
-        const userId = new ObjectId(req.user.id);
-        const botId = new ObjectId(req.params.botId);
-        const { stopMode } = req.body;
-
-        const userRobot = await db.collection("userrobots").findOne({ _id: botId, userId });
-        if (!userRobot) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: "Bot not found" });
-        }
-
-        const newStatus = stopMode === "pause" ? "PAUSED" : "STOPPED";
-
-        try {
-            await axios.post(
-                process.env.PYTHON_SERVER_URL + "/api/bots/update",
-                {
-                    botId: botId.toString(),
-                    userId: req.user.id,
-                    config: { ...userRobot.config, apiKeys: userRobot.apiKeys.map(k => k.data) },
-                    status: newStatus,
-                    templateId: userRobot.template.refId.toString(),
-                    platform: userRobot.template.snapshot.platform,
-                    market: userRobot.template.snapshot.market,
-                },
-                { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
-            );
-        } catch {
-            await session.abortTransaction();
-            return res.status(500).json({ message: "Failed to stop on Python server" });
-        }
-
-        await db.collection("userrobots").updateOne(
-            { _id: botId },
+        await axios.post(
+            process.env.PYTHON_SERVER_URL + "/api/bots/update",
             {
-                $set: { status: newStatus, lastUpdated: new Date() },
-                $push: { runHistory: { action: stopMode === "pause" ? "Paused" : "Stopped", timestamp: new Date() } }
+                botId: botId.toString(),
+                userId: userId,
+                config: { ...userRobot.config, apiKeys: userRobot.apiKeys.map(k => k.data) },
+                status: newStatus,
+                templateId: userRobot.template.refId.toString(),
+                platform: userRobot.template.snapshot.platform,
+                market: userRobot.template.snapshot.market,
             },
-            { session }
+            { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
         );
-
-        await session.commitTransaction();
-        res.json({ message: "Bot stopped", status: newStatus });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(500).json({ message: "Stop failed", error: error.message });
-    } finally {
-        await session.endSession();
+    } catch {
+        return res.status(500).json({ message: "Failed to stop on Python server" });
     }
+
+    await UserRobot.findByIdAndUpdate(
+        botId,
+        {
+            $set: { status: newStatus, lastUpdated: new Date() },
+            $push: { runHistory: { action: stopMode === "pause" ? "Paused" : "Stopped", timestamp: new Date() } }
+        }
+    );
+
+    res.json({ message: "Bot stopped", status: newStatus });
 });
 
-// @desc    Delete bot
-// @route   DELETE /api/bot/:botId
-// @access  Private
 export const deleteUserBot = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const client = req.client;
-    const session = client.startSession();
-    await session.startTransaction();
+    const userId = req.user.id;
+    const { botId } = req.params;
+
+    const userRobot = await UserRobot.findOne({ _id: botId, userId });
+    if (!userRobot) {
+        return res.status(404).json({ message: "Bot not found" });
+    }
 
     try {
-        const userId = new ObjectId(req.user.id);
-        const botId = new ObjectId(req.params.botId);
-
-        const userRobot = await db.collection("userrobots").findOne({ _id: botId, userId });
-        if (!userRobot) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: "Bot not found" });
-        }
-
-        try {
-            await axios.post(
-                process.env.PYTHON_SERVER_URL + "/api/bots/delete",
-                { botId: botId.toString(), userId: req.user.id, templateId: userRobot.template.refId.toString() },
-                { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
-            );
-        } catch {
-            await session.abortTransaction();
-            return res.status(500).json({ message: "Failed to delete on Python server" });
-        }
-
-        await db.collection("userrobots").deleteOne({ _id: botId }, { session });
-        await db.collection("users").updateOne(
-            { _id: userId },
-            { $pull: { robots: { robot_id: botId } } },
-            { session }
+        await axios.post(
+            process.env.PYTHON_SERVER_URL + "/api/bots/delete",
+            { botId: botId.toString(), userId: userId, templateId: userRobot.template.refId.toString() },
+            { headers: { Authorization: `Bearer ${process.env.PYTHON_SERVER_API_KEY}` } }
         );
-
-        await session.commitTransaction();
-        res.json({ message: "Bot deleted" });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(500).json({ message: "Delete failed", error: error.message });
-    } finally {
-        await session.endSession();
+    } catch {
+        return res.status(500).json({ message: "Failed to delete on Python server" });
     }
+
+    await UserRobot.findByIdAndDelete(botId);
+    await Users.findByIdAndUpdate(
+        userId,
+        { $pull: { robots: { robot_id: botId } } }
+    );
+
+    res.json({ message: "Bot deleted" });
 });
 
-// @desc    Update bot progress (from Python)
-// @route   POST /api/bot/:botId/progress
-// @access  Private (Python)
 export const updateBotProgress = asyncHandler(async (req, res) => {
-    const db = req.db;
-    const client = req.client;
-    const session = client.startSession();
-    await session.startTransaction();
+    const { botId } = req.params;
+    const { progress } = req.body;
 
-    try {
-        const botId = new ObjectId(req.params.botId);
-        const { progress } = req.body;
-
-        if (!botId || !progress) {
-            await session.abortTransaction();
-            return res.status(400).json({ message: "Invalid input" });
-        }
-
-        const update = {
-            $set: { progress, lastUpdated: new Date() },
-            $push: { runHistory: { action: "Progress Updated", timestamp: new Date(), progressSnapshot: progress } }
-        };
-
-        const result = await db.collection("userrobots").updateOne({ _id: botId }, update, { session });
-        if (result.matchedCount === 0) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: "Bot not found" });
-        }
-
-        await session.commitTransaction();
-        res.json({ message: "Progress updated", progress });
-    } catch (error) {
-        await session.abortTransaction();
-        res.status(500).json({ message: "Progress update failed", error: error.message });
-    } finally {
-        await session.endSession();
+    if (!botId || !progress) {
+        return res.status(400).json({ message: "Invalid input" });
     }
+
+    const update = {
+        $set: { progress, lastUpdated: new Date() },
+        $push: { runHistory: { action: "Progress Updated", timestamp: new Date(), progressSnapshot: progress } }
+    };
+
+    const result = await UserRobot.findByIdAndUpdate(botId, update);
+    if (!result) {
+        return res.status(404).json({ message: "Bot not found" });
+    }
+
+    res.json({ message: "Progress updated", progress });
 });
