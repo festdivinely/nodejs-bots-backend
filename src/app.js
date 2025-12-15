@@ -209,7 +209,7 @@ console.info("Initializing routes", {
 
 
 app.use("/api/auth", authRoutes);
-app.use("/api/bot", botRoutes);
+app.use("/api/bots", botRoutes);
 
 // 404 Handler
 app.use((req, res, next) => {
