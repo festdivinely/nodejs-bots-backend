@@ -2,7 +2,7 @@
 import asyncHandler from "express-async-handler";
 import axios from "axios";
 import BotTemplate from "../models/botTemplateModel.js";
-import UserRobot from "../models/userBotsModel.js"; // CHANGED: Matches your actual filename
+import UserRobot from "../models/userBotsModel.js";
 import Users from "../models/userModel.js";
 
 export const createBotTemplate = asyncHandler(async (req, res) => {
@@ -98,21 +98,8 @@ export const getAllBots = asyncHandler(async (req, res) => {
         .skip(skip)
         .limit(limit);
 
-    if (bots.length === 0) {
-        return res.status(404).json({
-            success: false,
-            message: "No bots found"
-        });
-    }
-
+    // FIXED: Return empty array instead of 404 when no bots
     const filteredBots = bots.filter(bot => bot.createdBy);
-
-    if (filteredBots.length === 0) {
-        return res.status(404).json({
-            success: false,
-            message: "No active admin bots available"
-        });
-    }
 
     const botResponse = filteredBots.map(bot => ({
         id: bot._id,
@@ -169,23 +156,10 @@ export const getUserBots = asyncHandler(async (req, res) => {
         .skip(skip)
         .limit(limit);
 
-    if (userRobots.length === 0) {
-        return res.status(404).json({
-            success: false,
-            message: "No bots found for this user"
-        });
-    }
-
+    // FIXED: Return empty array instead of 404 when no bots
     const filteredRobots = userRobots.filter(robot =>
         robot.template.refId && robot.template.refId.createdBy
     );
-
-    if (filteredRobots.length === 0) {
-        return res.status(404).json({
-            success: false,
-            message: "No valid bots found for this user"
-        });
-    }
 
     const robotResponse = filteredRobots.map(robot => ({
         id: robot._id,
