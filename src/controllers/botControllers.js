@@ -2,7 +2,7 @@
 import asyncHandler from "express-async-handler";
 import axios from "axios";
 import BotTemplate from "../models/botTemplateModel.js";
-import UserRobot from "../models/userRobotModel.js";
+import UserRobot from "../models/userBotsModel.js"; // CHANGED: Matches your actual filename
 import Users from "../models/userModel.js";
 
 export const createBotTemplate = asyncHandler(async (req, res) => {
